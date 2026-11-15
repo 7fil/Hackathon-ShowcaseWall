@@ -22,7 +22,7 @@ jobs:
           context: .
           file: ./Dockerfile
           tags: bcc-showcase-app:staging
-          outputs: type=docker,dest=/tmp/bcc-showcase-app.tar
+          outputs: type=docker,dest=bcc-showcase-app.tar
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -33,21 +33,20 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.VM_PORT }}
-          source: "/tmp/bcc-showcase-app.tar"
-          target: "/tmp"
-          strip_components: 1
+          source: "bcc-showcase-app.tar,docker-compose.yml"
+          target: "/opt/bcc-showcase"
 
       - name: Load image and restart container on VM
         uses: appleboy/ssh-action@v1.1.0
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
+          key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.VM_PORT }}
           script: |
             set -e
-            docker load -i /tmp/bcc-showcase-app.tar
-            rm -f /tmp/bcc-showcase-app.tar
             cd /opt/bcc-showcase
+            docker load -i bcc-showcase-app.tar
+            rm -f bcc-showcase-app.tar
             docker compose up -d --no-build
             docker image prune -f
