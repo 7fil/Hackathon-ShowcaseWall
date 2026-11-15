@@ -68,6 +68,23 @@ jobs:
 
             docker load -i bcc-showcase-app.tar
             rm -f bcc-showcase-app.tar
+
+            # Pull third-party images one at a time with retries. Pulling several large images in
+            # parallel on a small VM can break containerd's content store ("failed commit on ref ...").
+            echo "Disk before pull:"; df -h / /var/lib/docker 2>/dev/null || true
+            for img in $(docker compose config --images | grep -v '^bcc-showcase-app'); do
+              docker image inspect "$img" >/dev/null 2>&1 && continue
+              pulled=""
+              for n in 1 2 3; do
+                if docker pull "$img"; then pulled=1; break; fi
+                echo "pull of $img failed (attempt $n); cleaning dangling data and retrying"
+                docker image prune -f >/dev/null 2>&1 || true
+                docker builder prune -f >/dev/null 2>&1 || true
+                sleep 5
+              done
+              [ -n "$pulled" ] || { echo "::error::could not pull $img (check free disk on the VM: df -h)"; exit 1; }
+            done
+
             docker compose up -d --no-build --remove-orphans
             # Config files are bind-mounted, so reload Prometheus in case only they changed.
             docker compose exec -T prometheus wget -qO- --post-data= http://localhost:9090/-/reload >/dev/null || true
@@ -89,8 +106,8 @@ jobs:
             echo "Checking Grafana datasource and dashboard..."
             ok=""
             for i in $(seq 1 20); do
-              if curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASS" "http://127.0.0.1:$GRAFANA_PORT/api/dashboards/uid/showcase-wall" >/dev/null 2>&1 \
-                 && curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASS" "http://127.0.0.1:$GRAFANA_PORT/api/datasources/uid/prometheus/health" | grep -q '"OK"'; then ok=1; break; fi
+              if curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASS" "http://127.0.0.1:$GRAFANA_PORT/grafana/api/dashboards/uid/showcase-wall" >/dev/null 2>&1 \
+                 && curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASS" "http://127.0.0.1:$GRAFANA_PORT/grafana/api/datasources/uid/prometheus/health" | grep -q '"OK"'; then ok=1; break; fi
               sleep 3
             done
             if [ -z "$ok" ]; then
@@ -98,4 +115,15 @@ jobs:
               docker compose logs --tail=40 grafana
               exit 1
             fi
-            echo "Monitoring OK"
+            echo "Checking Grafana through the API port (what the public domain uses)..."
+            ok=""
+            for i in $(seq 1 10); do
+              if curl -fsS http://127.0.0.1:8080/grafana/api/health | grep -q '"database"'; then ok=1; break; fi
+              sleep 3
+            done
+            if [ -z "$ok" ]; then
+              echo "::error::Grafana is not reachable at :8080/grafana/ (proxy from the API)"
+              docker compose logs --tail=40 api grafana
+              exit 1
+            fi
+            echo "Monitoring OK: https://group4-be.bccdev.id/grafana/"
