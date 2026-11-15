@@ -29,6 +29,11 @@ func OK(c *gin.Context, status int, data any) {
 	c.JSON(status, gin.H{"data": data})
 }
 
+// OKWithMeta writes a paginated success body shaped { data, meta }.
+func OKWithMeta(c *gin.Context, status int, data any, meta any) {
+	c.JSON(status, gin.H{"data": data, "meta": meta})
+}
+
 // NoContent writes an empty response.
 func NoContent(c *gin.Context) {
 	c.Status(http.StatusNoContent)

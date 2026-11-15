@@ -108,11 +108,39 @@ func run() error {
 	}
 	r.Use(middleware.RequestID(), middleware.AccessLog(log), middleware.Recovery(log), middleware.CORS(cfg.FrontendOrigin))
 
+	var storage workssvc.ObjectStorage
+	if cfg.MinioEndpoint != "" {
+		s3Store, err := worksrepo.NewS3Storage(ctx, cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey, cfg.MinioBucket, cfg.MinioUseSSL)
+		if err != nil {
+			return err
+		}
+		storage = s3Store
+	} else {
+		log.Warn("MINIO_ENDPOINT not set: using local disk storage for covers", "dir", cfg.MediaLocalDir)
+		localStore, err := worksrepo.NewLocalDiskStorage(cfg.MediaLocalDir)
+		if err != nil {
+			return err
+		}
+		storage = localStore
+	}
+
+	worksRedis := worksrepo.NewRedisCache(rdb)
+	worksService := workssvc.New(workssvc.Deps{
+		Works:      worksrepo.NewWorkRepo(db),
+		Storage:    storage,
+		Cache:      worksRedis,
+		Events:     worksRedis,
+		Logger:     log,
+		SignSecret: []byte(cfg.JWTSecret),
+	})
+	defer worksService.Close()
+
 	r.GET("/health", func(c *gin.Context) { response.OK(c, http.StatusOK, gin.H{"status": "ok"}) })
 
 	v1 := r.Group("/api/v1")
 	authhandler.New(svc, authhandler.CookieConfig{Secure: cfg.CookieSecure, SameSite: cfg.CookieSameSite}, cfg.FrontendOrigin).
 		Routes(v1, limiter, log, middleware.Auth(svc))
+		workshandler.New(worksService).Routes(v1, middleware.Auth(svc))
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
