@@ -1,0 +1,2426 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "BCC Showcase Wall API",
+    "version": "1.0.0",
+    "description": "RESTful API & WebSocket contract for **BCC Showcase Wall**.\n\n### Current Implementation Status\n- **Implemented & Live (`Auth` & `Health`)**: `/health`, `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/otp/verify`, `/api/v1/auth/otp/resend`, `/api/v1/auth/oauth/firebase`, `/api/v1/auth/refresh`, `/api/v1/auth/logout`, `/api/v1/me`.\n- **Planned Contract (`Works`, `Media`, `Admin`)**: Matches Section 7 of the Frontend PRD and the Backend Spec.\n\n### WebSocket Contract (`WS /ws/wall`)\n- **URL**: `wss://group4-be.bccdev.id/ws/wall` (or `ws://localhost:8080/ws/wall`)\n- **Access**: Public, read-only (server ignores client messages except pong; checks `Origin: https://group4.bccdev.id`).\n- **Envelope**: `{ \"type\": string, \"seq\": number, \"payload\": object }`\n- **Events**:\n  - `work.published`: `{ \"id\", \"title\", \"summary\", \"category\", \"tech_stack\", \"team_members\", \"cover_url\", \"published_at\" }`\n  - `work.unpublished`: `{ \"id\": \"uuid-karya\" }`\n  - `work.deleted`: `{ \"id\": \"uuid-karya\" }`"
+  },
+  "servers": [
+    {
+      "url": "https://group4-be.bccdev.id",
+      "description": "Production / Staging VM"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "Local Development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Service availability probe (Implemented)"
+    },
+    {
+      "name": "Auth",
+      "description": "Email+OTP & Firebase OAuth authentication, token refresh, and session management (Implemented)"
+    },
+    {
+      "name": "Works (Public)",
+      "description": "Public gallery, featured work, exhibition mode, facets, and detail (Planned Contract)"
+    },
+    {
+      "name": "Works (Contributor & Owner)",
+      "description": "Contributor dashboard summary, owned works list, preview, and CRUD (Planned Contract)"
+    },
+    {
+      "name": "Admin",
+      "description": "Admin moderation: all works list, global summary, publish, unpublish, and feature (Planned Contract)"
+    },
+    {
+      "name": "Media",
+      "description": "Stable cover streaming for Published works (Planned Contract)"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "15-minute HS256 JWT access token returned by `/api/v1/auth/otp/verify`, `/api/v1/auth/oauth/firebase`, or `/api/v1/auth/refresh`."
+      },
+      "RefreshCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "refresh_token",
+        "description": "1-day HttpOnly refresh token cookie scoped to `/api/v1/auth`."
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "validation_failed",
+                "description": "Machine-readable error code"
+              },
+              "message": {
+                "type": "string",
+                "example": "Input tidak valid",
+                "description": "Human-readable error message (Indonesian)"
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "example": {
+                  "email": "Email tidak valid"
+                },
+                "description": "Field-specific validation messages (present on 422 and some 409 responses)"
+              }
+            }
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "role"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "bagas@bccdev.id"
+          },
+          "display_name": {
+            "type": "string",
+            "example": "Bagas Pratama"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "Contributor",
+              "Admin"
+            ],
+            "example": "Contributor"
+          }
+        }
+      },
+      "AuthSuccessData": {
+        "type": "object",
+        "required": [
+          "access_token",
+          "user"
+        ],
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+          },
+          "user": {
+            "$ref": "#/components/schemas/User"
+          }
+        }
+      },
+      "CodeSentData": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "code_sent"
+          }
+        }
+      },
+      "PublicWork": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "summary",
+          "category",
+          "tech_stack",
+          "team_members",
+          "cover_url",
+          "published_at",
+          "is_featured"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "title": {
+            "type": "string",
+            "example": "Smart Campus IoT Monitor"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 160,
+            "example": "Pemantauan kualitas udara dan konsumsi energi gedung kampus secara realtime."
+          },
+          "category": {
+            "type": "string",
+            "example": "IoT & Hardware"
+          },
+          "tech_stack": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "Go",
+              "Next.js",
+              "MQTT"
+            ]
+          },
+          "team_members": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "Bagas",
+              "Nadia"
+            ]
+          },
+          "cover_url": {
+            "type": "string",
+            "example": "/api/v1/media/works/550e8400-e29b-41d4-a716-446655440000/cover"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-11-15T09:00:00Z"
+          },
+          "is_featured": {
+            "type": "boolean",
+            "example": false
+          }
+        }
+      },
+      "PublicWorkDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PublicWork"
+          },
+          {
+            "type": "object",
+            "required": [
+              "description",
+              "benefits",
+              "demo_url",
+              "repo_url"
+            ],
+            "properties": {
+              "description": {
+                "type": "string",
+                "example": "Sistem pemantauan berbasis sensor ESP32 yang terintegrasi dengan dashboard web realtime."
+              },
+              "benefits": {
+                "type": "string",
+                "example": "Membantu pengelola gedung menghemat energi hingga 20% dan mendeteksi ruangan berventilasi buruk."
+              },
+              "demo_url": {
+                "type": "string",
+                "nullable": true,
+                "example": "https://iot-demo.bccdev.id"
+              },
+              "repo_url": {
+                "type": "string",
+                "nullable": true,
+                "example": "https://github.com/bcc/iot-monitor"
+              }
+            }
+          }
+        ]
+      },
+      "ManagedWork": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "summary",
+          "description",
+          "benefits",
+          "category",
+          "tech_stack",
+          "team_members",
+          "cover_url",
+          "demo_url",
+          "repo_url",
+          "status",
+          "is_featured",
+          "owner_name",
+          "published_at",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
+          },
+          "title": {
+            "type": "string",
+            "example": "Smart Campus IoT Monitor"
+          },
+          "summary": {
+            "type": "string",
+            "example": "Pemantauan kualitas udara dan konsumsi energi gedung kampus secara realtime."
+          },
+          "description": {
+            "type": "string",
+            "example": "Sistem pemantauan berbasis sensor ESP32 yang terintegrasi dengan dashboard web realtime."
+          },
+          "benefits": {
+            "type": "string",
+            "example": "Membantu pengelola gedung menghemat energi hingga 20%."
+          },
+          "category": {
+            "type": "string",
+            "example": "IoT & Hardware"
+          },
+          "tech_stack": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "Go",
+              "Next.js"
+            ]
+          },
+          "team_members": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "Bagas",
+              "Nadia"
+            ]
+          },
+          "cover_url": {
+            "type": "string",
+            "example": "/api/v1/media/works/550e8400-e29b-41d4-a716-446655440000/cover?sig=..."
+          },
+          "demo_url": {
+            "type": "string",
+            "nullable": true,
+            "example": "https://iot-demo.bccdev.id"
+          },
+          "repo_url": {
+            "type": "string",
+            "nullable": true,
+            "example": "https://github.com/bcc/iot-monitor"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "Draft",
+              "Published",
+              "Unpublished"
+            ],
+            "example": "Draft"
+          },
+          "is_featured": {
+            "type": "boolean",
+            "example": false
+          },
+          "owner_name": {
+            "type": "string",
+            "example": "Bagas Pratama"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": null
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-11-15T08:30:00Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2026-11-15T08:30:00Z"
+          }
+        }
+      },
+      "DashboardSummary": {
+        "type": "object",
+        "required": [
+          "total_draft",
+          "total_published",
+          "total_unpublished",
+          "total_featured"
+        ],
+        "properties": {
+          "total_draft": {
+            "type": "integer",
+            "example": 2
+          },
+          "total_published": {
+            "type": "integer",
+            "example": 5
+          },
+          "total_unpublished": {
+            "type": "integer",
+            "example": 1
+          },
+          "total_featured": {
+            "type": "integer",
+            "example": 1
+          }
+        }
+      },
+      "CursorMeta": {
+        "type": "object",
+        "properties": {
+          "next_cursor": {
+            "type": "string",
+            "nullable": true,
+            "example": "eyJwdWJsaXNoZWRfYXQiOiIyMDI2LTExLTE1VDA5OjAwOjAwWiIsImlkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIn0="
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Health Check",
+        "description": "Availability probe used by Docker healthcheck and deployment checks.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "example": "ok"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Start Registration (Send OTP)",
+        "description": "Validates `name` (2-100 chars), `email`, and `password` (8-72 bytes), stores a pending registration in Redis for 10 minutes, and sends a 6-digit OTP code via Resend. Rate-limited to 20 requests/hour per IP and 1 code/min, 5 codes/hour per email.",
+        "operationId": "registerUser",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 100,
+                    "example": "Bagas Pratama"
+                  },
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "maxLength": 254,
+                    "example": "bagas@bccdev.id"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 8,
+                    "maxLength": 72,
+                    "example": "SecretPass123!"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "OTP code sent to email",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/CodeSentData"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON body (`invalid_json`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email is already registered (`email_taken`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "email_taken",
+                    "message": "Email sudah terdaftar",
+                    "fields": {
+                      "email": "Email sudah terdaftar"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Field validation failed (`validation_failed`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "validation_failed",
+                    "message": "Input tidak valid",
+                    "fields": {
+                      "name": "Nama minimal 2 karakter",
+                      "email": "Email tidak valid",
+                      "password": "Password minimal 8 karakter"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded (`rate_limited`)",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer"
+                },
+                "description": "Seconds until retry"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Start Login with Email & Password (Send OTP)",
+        "description": "Verifies email and password in constant time (5 failed logins per 15m per email lock), then sends a 6-digit OTP code to the user's email. Note: OAuth-only users without a password receive the same generic 401 response.",
+        "operationId": "loginUser",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "bagas@bccdev.id"
+                  },
+                  "password": {
+                    "type": "string",
+                    "example": "SecretPass123!"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Credentials valid; OTP code sent to email",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/CodeSentData"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong email or password (`invalid_credentials`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "invalid_credentials",
+                    "message": "Email atau password salah"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Field validation failed (`validation_failed`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded (`rate_limited`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/otp/verify": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Verify 6-Digit OTP Code (Register or Login)",
+        "description": "Verifies the 6-digit OTP code (valid 10m, max 5 attempts, single use). On `purpose: \"register\"`, creates the Contributor account. Returns `access_token` + `user` in JSON and sets the `HttpOnly` `refresh_token` cookie.",
+        "operationId": "verifyOtp",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "code",
+                  "purpose"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "bagas@bccdev.id"
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^[0-9]{6}$",
+                    "example": "482910"
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "enum": [
+                      "register",
+                      "login"
+                    ],
+                    "example": "login"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP verified; session created",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "refresh_token=<opaque_token>; Path=/api/v1/auth; HttpOnly; Secure; SameSite=Lax"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AuthSuccessData"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email was registered by another request while OTP was pending (`email_taken`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid/expired OTP (`invalid_code`), max attempts exceeded (`code_attempts_exceeded`), or invalid input (`validation_failed`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "examples": {
+                  "invalid_code": {
+                    "summary": "Wrong or expired code",
+                    "value": {
+                      "error": {
+                        "code": "invalid_code",
+                        "message": "Kode salah atau sudah kedaluwarsa",
+                        "fields": {
+                          "code": "Kode salah atau sudah kedaluwarsa"
+                        }
+                      }
+                    }
+                  },
+                  "code_attempts_exceeded": {
+                    "summary": "More than 5 failed attempts",
+                    "value": {
+                      "error": {
+                        "code": "code_attempts_exceeded",
+                        "message": "Terlalu banyak percobaan, minta kode baru",
+                        "fields": {
+                          "code": "Terlalu banyak percobaan, minta kode baru"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded (`rate_limited`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/otp/resend": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Resend OTP Code",
+        "description": "Issues a new 6-digit OTP code and resets attempt count if a pending step exists. Always returns `202 Accepted` when within rate limits so callers cannot probe account state.",
+        "operationId": "resendOtp",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "purpose"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "bagas@bccdev.id"
+                  },
+                  "purpose": {
+                    "type": "string",
+                    "enum": [
+                      "register",
+                      "login"
+                    ],
+                    "example": "register"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "New OTP code dispatched if pending step exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/CodeSentData"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed (`validation_failed`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded (`rate_limited`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/firebase": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Sign In / Sign Up with Firebase OAuth (Google)",
+        "description": "Exchanges a Firebase ID Token (`id_token`) obtained on the frontend for a backend session (`access_token` + `HttpOnly` `refresh_token` cookie) without requiring an email OTP code.\n\n**Account Resolution Rules:**\n- **Returning OAuth User**: Matched by `firebase_uid`.\n- **Existing Local User (Unlinked)**: Automatically links `firebase_uid` to the existing account and sets `auth_provider = \"both\"`.\n- **New Email**: Creates user with `password_hash = NULL`, `auth_provider = \"google\"`, and role `Admin` if email is in `ADMIN_EMAILS`/`ADMIN_EMAIL`, else `Contributor`.\n- **Conflict**: If the email is already linked to a different `firebase_uid`, returns `409 oauth_account_conflict`.",
+        "operationId": "oauthFirebase",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id_token"
+                ],
+                "properties": {
+                  "id_token": {
+                    "type": "string",
+                    "description": "Firebase ID Token returned by `userCredential.user.getIdToken()`",
+                    "example": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2..."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OAuth sign-in/sign-up succeeded",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "refresh_token=<opaque_token>; Path=/api/v1/auth; HttpOnly; Secure; SameSite=Lax"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AuthSuccessData"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired Firebase ID token (`invalid_id_token`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "invalid_id_token",
+                    "message": "Token Google tidak valid atau sudah kedaluwarsa"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Provider email is not verified (`email_not_verified`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "email_not_verified",
+                    "message": "Email Anda belum diverifikasi oleh penyedia login"
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Email is already linked to a different Google account (`oauth_account_conflict`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "oauth_account_conflict",
+                    "message": "Email ini sudah tertaut ke akun Google lain"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Missing `id_token` (`validation_failed`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "validation_failed",
+                    "message": "Input tidak valid",
+                    "fields": {
+                      "id_token": "id_token wajib diisi"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded (`rate_limited`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Firebase credentials not configured on server (`oauth_unavailable`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "oauth_unavailable",
+                    "message": "Login dengan Google belum tersedia"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Rotate Refresh Token & Issue New Access Token",
+        "description": "Reads the `refresh_token` HttpOnly cookie, rotates the session in PostgreSQL, sets a new `refresh_token` cookie, and returns a new 15-minute `access_token`. Presenting a previously rotated token revokes the entire session family (`invalid_session`).",
+        "operationId": "refreshSession",
+        "security": [
+          {
+            "RefreshCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token rotated",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "refresh_token=<new_opaque_token>; Path=/api/v1/auth; HttpOnly; Secure; SameSite=Lax"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "access_token"
+                      ],
+                      "properties": {
+                        "access_token": {
+                          "type": "string",
+                          "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, expired, revoked, or reused refresh token (`invalid_session`); clears cookie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "invalid_session",
+                    "message": "Sesi tidak valid, silakan masuk kembali"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Origin header does not match `FRONTEND_ORIGIN` (`forbidden_origin`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Logout & Revoke Session Family",
+        "description": "Revokes the current session family in PostgreSQL and clears the `refresh_token` cookie.",
+        "operationId": "logoutUser",
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "RefreshCookie": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Session revoked and cookie cleared"
+          },
+          "401": {
+            "description": "Missing or invalid Bearer token (`unauthorized` / `token_expired`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Origin header mismatch (`forbidden_origin`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Get Current Signed-In User",
+        "description": "Returns the profile and role of the authenticated user from PostgreSQL.",
+        "operationId": "getMe",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current user profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/User"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated or expired token (`unauthorized` / `token_expired`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/works": {
+      "get": {
+        "tags": [
+          "Works (Public)"
+        ],
+        "summary": "List Published Works (Public Gallery)",
+        "description": "Returns cursor-paginated `Published` works ordered by `published_at DESC, id DESC`. Supports combined search (`q`), `category`, and `tech_stack` filters.",
+        "operationId": "listPublicWorks",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Case-insensitive title search"
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by category (case-insensitive)"
+          },
+          {
+            "name": "tech_stack",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by tech stack item (case-insensitive)"
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Pagination cursor from `meta.next_cursor`"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 20
+            },
+            "description": "Max items per page (capped at 20)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of Published works",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublicWork"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/CursorMeta"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Works (Contributor & Owner)"
+        ],
+        "summary": "Create a New Work (Starts as Draft)",
+        "description": "Creates a new work with status `Draft` using `multipart/form-data`. `tech_stack` and `team_members` are sent as repeated form fields (`formData.append('tech_stack', item)`).",
+        "operationId": "createWork",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "summary",
+                  "description",
+                  "benefits",
+                  "category",
+                  "tech_stack",
+                  "team_members",
+                  "cover"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 3,
+                    "example": "Smart Campus IoT Monitor"
+                  },
+                  "summary": {
+                    "type": "string",
+                    "maxLength": 160,
+                    "example": "Pemantauan kualitas udara dan konsumsi energi gedung kampus secara realtime."
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 10
+                  },
+                  "benefits": {
+                    "type": "string",
+                    "minLength": 10
+                  },
+                  "category": {
+                    "type": "string",
+                    "maxLength": 50,
+                    "example": "IoT & Hardware"
+                  },
+                  "tech_stack": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "maxItems": 10
+                  },
+                  "team_members": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "maxItems": 10
+                  },
+                  "demo_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "repo_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "cover": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "JPEG, PNG, or WebP image up to 5 MB"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Draft work created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ManagedWork"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/works/featured": {
+      "get": {
+        "tags": [
+          "Works (Public)"
+        ],
+        "summary": "Get Featured Published Work",
+        "description": "Returns the single featured `Published` work, or `null` if none is featured.",
+        "operationId": "getFeaturedWork",
+        "responses": {
+          "200": {
+            "description": "Featured work or null",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "nullable": true,
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/PublicWork"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/works/exhibition": {
+      "get": {
+        "tags": [
+          "Works (Public)"
+        ],
+        "summary": "List All Published Works for Exhibition Mode (A-Z)",
+        "description": "Returns all `Published` works sorted alphabetically by `title` (A-Z) without pagination for `/exhibition` booth display.",
+        "operationId": "listExhibitionWorks",
+        "responses": {
+          "200": {
+            "description": "List of Published works sorted A-Z",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/PublicWork"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/works/facets": {
+      "get": {
+        "tags": [
+          "Works (Public)"
+        ],
+        "summary": "Get Filter Facets (Categories & Tech Stack)",
+        "description": "Returns distinct categories and tech stack items across all `Published` works.",
+        "operationId": "getWorkFacets",
+        "responses": {
+          "200": {
+            "description": "Available filter options",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "required": [
+                        "categories",
+                        "tech_stack"
+                      ],
+                      "properties": {
+                        "categories": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "example": [
+                            "AI & Data",
+                            "IoT & Hardware",
+                            "Web App"
+                          ]
+                        },
+                        "tech_stack": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "example": [
+                            "Go",
+                            "Next.js",
+                            "PostgreSQL",
+                            "TypeScript"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/works/{id}": {
+      "get": {
+        "tags": [
+          "Works (Public)"
+        ],
+        "summary": "Get Public Work Detail",
+        "description": "Returns full details of a `Published` work. Returns `404` if the work does not exist or is `Draft`/`Unpublished`.",
+        "operationId": "getPublicWorkDetail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published work detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/PublicWorkDetail"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found or not Published",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Works (Contributor & Owner)"
+        ],
+        "summary": "Edit Work (Owner or Admin)",
+        "description": "Updates work content and optionally replaces `cover`. Does not change publication status or featured mark.",
+        "operationId": "updateWork",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "summary",
+                  "description",
+                  "benefits",
+                  "category",
+                  "tech_stack",
+                  "team_members"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 3
+                  },
+                  "summary": {
+                    "type": "string",
+                    "maxLength": 160
+                  },
+                  "description": {
+                    "type": "string",
+                    "minLength": 10
+                  },
+                  "benefits": {
+                    "type": "string",
+                    "minLength": 10
+                  },
+                  "category": {
+                    "type": "string",
+                    "maxLength": 50
+                  },
+                  "tech_stack": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "team_members": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "demo_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "repo_url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "cover": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Optional replacement cover (JPEG, PNG, WebP up to 5 MB)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated work",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ManagedWork"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (not owner of Published work)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (or non-owner accessing Draft/Unpublished)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Works (Contributor & Owner)"
+        ],
+        "summary": "Delete Work (Owner or Admin)",
+        "description": "Soft-deletes the work, removes media from MinIO in the background, and broadcasts `work.deleted` on `/ws/wall` if the work was `Published`.",
+        "operationId": "deleteWork",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Work deleted"
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/media/works/{id}/cover": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Stream Published Work Cover Image",
+        "description": "Streams the cover image of a `Published` work from MinIO. Returns `404` immediately if the work is hidden or deleted.",
+        "operationId": "getPublishedWorkCover",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cover image stream",
+            "content": {
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Work not found or not Published",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/works": {
+      "get": {
+        "tags": [
+          "Works (Contributor & Owner)"
+        ],
+        "summary": "List Own Works (Contributor Dashboard)",
+        "description": "Returns works owned by the signed-in user across all statuses (`Draft`, `Published`, `Unpublished`).",
+        "operationId": "listMyWorks",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search by title"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "Draft",
+                "Published",
+                "Unpublished"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of own works",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ManagedWork"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/CursorMeta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/works/{id}": {
+      "get": {
+        "tags": [
+          "Works (Contributor & Owner)"
+        ],
+        "summary": "Get Work for Dashboard Preview / Edit (Owner or Admin)",
+        "description": "Returns a `ManagedWork` of any status (with a 10-minute signed `cover_url` if `Draft`/`Unpublished`) for the owner or an Admin.",
+        "operationId": "getManagedWork",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Managed work detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ManagedWork"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/me/summary": {
+      "get": {
+        "tags": [
+          "Works (Contributor & Owner)"
+        ],
+        "summary": "Get Contributor Dashboard Summary",
+        "description": "Returns counts of the signed-in user's own works by status and featured mark.",
+        "operationId": "getMySummary",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Own works summary counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DashboardSummary"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/works": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List All Works (Admin Dashboard)",
+        "description": "Returns all works in the system with `owner_name`. Supports searching by title or owner name (`q`) and filtering by `status`.",
+        "operationId": "adminListWorks",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search by work title or owner name"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "Draft",
+                "Published",
+                "Unpublished"
+              ]
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "maximum": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of all works",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ManagedWork"
+                      }
+                    },
+                    "meta": {
+                      "$ref": "#/components/schemas/CursorMeta"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires Admin role (`forbidden`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/summary": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Get Global Dashboard Summary (Admin)",
+        "description": "Returns total counts of `Draft`, `Published`, `Unpublished`, and `Featured` works across the entire system.",
+        "operationId": "adminGetSummary",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Global summary counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/DashboardSummary"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires Admin role (`forbidden`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/works/{id}/publish": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Publish a Draft or Unpublished Work (Admin)",
+        "description": "Transitions a `Draft` or `Unpublished` work to `Published`, sets `published_at`, invalidates Redis gallery cache, and broadcasts `work.published` over `/ws/wall`.",
+        "operationId": "adminPublishWork",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Work published",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ManagedWork"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires Admin role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Work not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Work is already Published",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/works/{id}/unpublish": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Unpublish a Published Work (Admin)",
+        "description": "Transitions a `Published` work to `Unpublished`, clears `is_featured`, invalidates Redis cache, and broadcasts `work.unpublished` over `/ws/wall`.",
+        "operationId": "adminUnpublishWork",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Work unpublished",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ManagedWork"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires Admin role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Work not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Work is not currently Published",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/works/{id}/feature": {
+      "patch": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Set or Clear Featured Work (Admin)",
+        "description": "Sets or clears `is_featured` on a `Published` work. Featuring a new work automatically clears the previous featured work in the same transaction.",
+        "operationId": "adminFeatureWork",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "is_featured"
+                ],
+                "properties": {
+                  "is_featured": {
+                    "type": "boolean",
+                    "example": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Featured status updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ManagedWork"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Requires Admin role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Work not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Work is not Published (only Published works can be featured)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
