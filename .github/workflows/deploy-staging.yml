@@ -22,6 +22,8 @@ jobs:
           context: .
           file: ./Dockerfile
           tags: bcc-showcase-app:staging
+          build-args: |
+            APP_VERSION=${{ github.sha }}
           outputs: type=docker,dest=bcc-showcase-app.tar
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -50,6 +52,11 @@ jobs:
             set -e
             cd /opt/bcc-showcase
             touch .env
+
+            # Set KEY=VALUE in .env (replaces an existing line).
+            setenv() { grep -v "^$1=" .env > .env.tmp || true; printf '%s=%s\n' "$1" "$2" >> .env.tmp; mv .env.tmp .env; chmod 600 .env; }
+            setenv APP_ENV staging
+            setenv IMAGE_TAG staging
 
             # Grafana admin password: written from the GitHub secret, kept in .env on the VM.
             if [ -n "$GRAFANA_ADMIN_PASSWORD" ]; then

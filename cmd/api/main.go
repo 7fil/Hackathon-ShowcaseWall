@@ -30,12 +30,16 @@ import (
 	worksrepo "github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/repository"
 	workssvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/middleware"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/logger"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/response"
 )
 
 func main() {
+	// Until the config is loaded, startup failures are still logged in the right shape
+	// (JSON in staging and production) so a log collector can read them.
+	slog.SetDefault(logger.New(logger.Options{Env: os.Getenv("APP_ENV"), Version: os.Getenv("APP_VERSION")}))
 	if err := run(); err != nil {
-		slog.Error("fatal", "error", err.Error())
+		slog.Error("fatal: api stopped", "error", err.Error())
 		os.Exit(1)
 	}
 }
@@ -58,7 +62,7 @@ func run() error {
 
 	var mailer authsvc.Mailer
 	if cfg.DevPrintOTP {
-		log.Warn("DEV_PRINT_OTP is on: login codes are printed to the console")
+		log.Warn("DEV_PRINT_OTP is on: login codes are printed to the console (never use outside development)")
 		mailer = authrepo.ConsoleMailer{}
 	} else {
 		mailer = authrepo.NewResendMailer(cfg.ResendAPIKey, cfg.ResendFrom)
@@ -80,24 +84,24 @@ func run() error {
 	}
 
 	svc, err := authsvc.New(authsvc.Deps{
-		Users:       authrepo.NewUserRepo(db),
-		Sessions:    authrepo.NewSessionRepo(db),
-		Codes:       authrepo.NewCodeRepo(rdb),
-		Limiter:     limiter,
-		Mailer:      mailer,
-		Hasher:      security.NewBcrypt(),
-		Tokens:      security.NewJWT(cfg.JWTSecret, authsvc.AccessTTL),
-		Logger:      log,
-		IDTokens:    idTokens,
-		AdminEmails: cfg.AdminEmails,
-		CodeSecret:  []byte(cfg.JWTSecret),
+		Users:      authrepo.NewUserRepo(db),
+		Sessions:   authrepo.NewSessionRepo(db),
+		Codes:      authrepo.NewCodeRepo(rdb),
+		Limiter:    limiter,
+		Mailer:     mailer,
+		Hasher:     security.NewBcrypt(),
+		Tokens:     security.NewJWT(cfg.JWTSecret, authsvc.AccessTTL),
+		Logger:     log,
+		IDTokens:   idTokens,
+		CodeSecret: []byte(cfg.JWTSecret),
 	})
 	if err != nil {
 		return err
 	}
 	defer svc.Close()
 
-	if cfg.IsProduction() {
+	// Release mode everywhere except development: no route dump or debug text on stdout.
+	if !cfg.IsDevelopment() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()

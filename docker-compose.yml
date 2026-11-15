@@ -1,18 +1,33 @@
+# One compose file for staging and production. What differs lives in .env (APP_ENV,
+# IMAGE_TAG, COMPOSE_PROJECT_NAME, CONTAINER_PREFIX, ports, passwords), never in code.
+#
+# Logs: every service writes to stdout and Docker keeps a rotated JSON file per container
+# (read it with `docker logs`). Without these limits the files grow until the disk is full.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+    compress: "true"
+
 services:
   api:
-    image: bcc-showcase-app:staging
+    image: bcc-showcase-app:${IMAGE_TAG:-staging}
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: showcase-api
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+    container_name: ${CONTAINER_PREFIX:-showcase}-api
     restart: unless-stopped
+    logging: *default-logging
     user: "0:0"
     ports:
-      - "8080:8080"
+      - "${API_PORT:-8080}:8080"
     env_file:
       - .env
     environment:
-      APP_ENV: ${APP_ENV:-production}
+      APP_ENV: ${APP_ENV:?set APP_ENV in .env (development, staging or production)}
       PORT: "8080"
       METRICS_PORT: "9100"
       DATABASE_URL: postgres://${POSTGRES_USER:-showcase}:${POSTGRES_PASSWORD:-showcase}@postgres:5432/${POSTGRES_DB:-showcase}?sslmode=disable
@@ -32,8 +47,9 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: showcase-postgres
+    container_name: ${CONTAINER_PREFIX:-showcase}-postgres
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-showcase}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-showcase}
@@ -52,8 +68,9 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: showcase-redis
+    container_name: ${CONTAINER_PREFIX:-showcase}-redis
     restart: unless-stopped
+    logging: *default-logging
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "100mb", "--maxmemory-policy", "volatile-lru"]
     volumes:
       - redisdata:/data
@@ -69,8 +86,9 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.55.1
-    container_name: showcase-prometheus
+    container_name: ${CONTAINER_PREFIX:-showcase}-prometheus
     restart: unless-stopped
+    logging: *default-logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -96,8 +114,9 @@ services:
 
   grafana:
     image: grafana/grafana:11.3.0
-    container_name: showcase-grafana
+    container_name: ${CONTAINER_PREFIX:-showcase}-grafana
     restart: unless-stopped
+    logging: *default-logging
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env (CI writes it from the GRAFANA_ADMIN_PASSWORD secret)}

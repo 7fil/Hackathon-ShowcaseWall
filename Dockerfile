@@ -29,7 +29,11 @@ RUN mkdir -p /app/secrets /data/media && chown -R appuser:appgroup /app /data
 
 USER appuser
 
+# Stamped into every log line as "version" (CI passes the git SHA).
+ARG APP_VERSION=dev
+
 ENV APP_ENV=production \
+    APP_VERSION=${APP_VERSION} \
     PORT=8080 \
     METRICS_PORT=9100 \
     MEDIA_LOCAL_DIR=/data/media

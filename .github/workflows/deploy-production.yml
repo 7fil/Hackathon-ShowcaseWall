@@ -1,0 +1,179 @@
+name: Deploy Production Backend to VM
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      wipe_data:
+        description: "DESTROY production data (database, Redis, covers) and start empty"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image and export to tar
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          tags: bcc-showcase-app:production
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+          outputs: type=docker,dest=bcc-showcase-app.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Copy image tar to VM via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.VM_PORT }}
+          source: "bcc-showcase-app.tar,docker-compose.yml,monitoring"
+          target: "/opt/bcc-showcase-prod"
+
+      - name: Load image, check config, fresh database on first deploy, restart stack and verify
+        uses: appleboy/ssh-action@v1.1.0
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          WIPE_DATA: ${{ inputs.wipe_data }}
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.VM_PORT }}
+          envs: GRAFANA_ADMIN_PASSWORD,WIPE_DATA
+          script: |
+            set -e
+            cd /opt/bcc-showcase-prod
+            touch .env
+
+            # Set KEY=VALUE in .env (replaces an existing line).
+            setenv() { grep -v "^$1=" .env > .env.tmp || true; printf '%s=%s\n' "$1" "$2" >> .env.tmp; mv .env.tmp .env; chmod 600 .env; }
+            setenv APP_ENV production
+            setenv IMAGE_TAG production
+            setenv COMPOSE_PROJECT_NAME bcc-showcase-prod
+            setenv CONTAINER_PREFIX showcase-prod
+
+            # Grafana admin password: written from the GitHub secret, kept in .env on the VM.
+            if [ -n "$GRAFANA_ADMIN_PASSWORD" ]; then
+              grep -v '^GRAFANA_ADMIN_PASSWORD=' .env > .env.tmp || true
+              printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$GRAFANA_ADMIN_PASSWORD" >> .env.tmp
+              mv .env.tmp .env
+              chmod 600 .env
+            fi
+            if ! grep -q '^GRAFANA_ADMIN_PASSWORD=.' .env; then
+              echo "::error::GRAFANA_ADMIN_PASSWORD is not set: add it as a GitHub secret (or put it in /opt/bcc-showcase-prod/.env)"
+              exit 1
+            fi
+            GRAFANA_USER=$(grep '^GRAFANA_ADMIN_USER=' .env | cut -d= -f2- || true); GRAFANA_USER=${GRAFANA_USER:-admin}
+            GRAFANA_PASS=$(grep '^GRAFANA_ADMIN_PASSWORD=' .env | cut -d= -f2-)
+
+            # ---- refuse to deploy a misconfigured production ----
+            val() { grep "^$1=" .env | tail -n1 | cut -d= -f2-; }
+            fail=""
+            for k in JWT_SECRET RESEND_API_KEY RESEND_FROM FRONTEND_ORIGIN POSTGRES_PASSWORD; do
+              [ -n "$(val $k)" ] || { echo "::error::$k is missing in /opt/bcc-showcase-prod/.env"; fail=1; }
+            done
+            [ "$(val POSTGRES_PASSWORD)" != "showcase" ] || { echo "::error::POSTGRES_PASSWORD must not be the default"; fail=1; }
+            [ "$(val JWT_SECRET | wc -c)" -gt 32 ] || { echo "::error::JWT_SECRET must be at least 32 characters"; fail=1; }
+            [ "$(val DEV_PRINT_OTP)" != "true" ] || { echo "::error::DEV_PRINT_OTP must not be true in production"; fail=1; }
+            [ "$(val COOKIE_SECURE)" != "false" ] || { echo "::error::COOKIE_SECURE must not be false in production"; fail=1; }
+            [ "$(val COMPOSE_PROJECT_NAME)" != "bcc-showcase" ] || { echo "::error::production must not share the staging compose project"; fail=1; }
+            [ -z "$fail" ] || exit 1
+
+            # ---- fresh database on the first production deploy (or when wipe_data was ticked) ----
+            if [ ! -f .fresh-db-initialized ] || [ "$WIPE_DATA" = "true" ]; then
+              echo "::warning::Starting production with an EMPTY database, Redis and cover storage"
+              docker compose down -v --remove-orphans || true
+              FRESH=1
+            fi
+
+            docker load -i bcc-showcase-app.tar
+            rm -f bcc-showcase-app.tar
+
+            # Pull third-party images one at a time with retries. Pulling several large images in
+            # parallel on a small VM can break containerd's content store ("failed commit on ref ...").
+            echo "Disk before pull:"; df -h / /var/lib/docker 2>/dev/null || true
+            for img in $(docker compose config --images | grep -v '^bcc-showcase-app'); do
+              docker image inspect "$img" >/dev/null 2>&1 && continue
+              pulled=""
+              for n in 1 2 3; do
+                if docker pull "$img"; then pulled=1; break; fi
+                echo "pull of $img failed (attempt $n); cleaning dangling data and retrying"
+                docker image prune -f >/dev/null 2>&1 || true
+                docker builder prune -f >/dev/null 2>&1 || true
+                sleep 5
+              done
+              [ -n "$pulled" ] || { echo "::error::could not pull $img (check free disk on the VM: df -h)"; exit 1; }
+            done
+
+            docker compose up -d --no-build --remove-orphans
+            # Config files are bind-mounted, so reload Prometheus in case only they changed.
+            docker compose exec -T prometheus wget -qO- --post-data= http://localhost:9090/-/reload >/dev/null || true
+            docker image prune -f
+
+            echo "Waiting for Prometheus to scrape the API..."
+            ok=""
+            for i in $(seq 1 30); do
+              if docker compose exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22showcase-api%22%7D' | grep -q '"1"\]'; then ok=1; break; fi
+              sleep 3
+            done
+            if [ -z "$ok" ]; then
+              echo "::error::Prometheus cannot scrape api:9100"
+              docker compose ps
+              docker compose logs --tail=40 prometheus api
+              exit 1
+            fi
+
+            echo "Checking Grafana datasource and dashboard..."
+            # Checked from inside the container (localhost:3000), so published ports and any
+            # proxy on the VM cannot interfere.
+            B64=$(printf '%s:%s' "$GRAFANA_USER" "$GRAFANA_PASS" | base64 | tr -d '\n')
+            gget() { docker compose exec -T grafana wget -qO- --header "Authorization: Basic $B64" "http://localhost:3000$1"; }
+            ok=""
+            for i in $(seq 1 20); do
+              if gget /api/dashboards/uid/showcase-wall 2>/dev/null | grep -q '"uid":"showcase-wall"' \
+                 && gget /api/datasources/uid/prometheus/health 2>/dev/null | grep -q '"OK"'; then ok=1; break; fi
+              sleep 3
+            done
+            if [ -z "$ok" ]; then
+              echo "::error::Grafana dashboard or Prometheus datasource is not healthy"
+              echo "--- grafana server env"; docker compose exec -T grafana env | grep -E '^GF_(SERVER|PATHS)' || true
+              echo "--- compose files on the VM"; ls -la /opt/bcc-showcase-prod | grep -i -E 'compose|\.env' || true
+              echo "--- provisioned dashboard files"; docker compose exec -T grafana ls -la /var/lib/grafana/dashboards || true
+              echo "--- grafana health"; gget /api/health || true
+              echo "--- dashboard request"; docker compose exec -T grafana wget -S -O- --header "Authorization: Basic $B64" http://localhost:3000/api/dashboards/uid/showcase-wall 2>&1 | head -20 || true
+              echo "--- datasource health"; gget /api/datasources/uid/prometheus/health || true
+              docker compose logs --tail=40 grafana
+              exit 1
+            fi
+            echo "Monitoring OK (Grafana and Prometheus are tunnel-only, see README)"
+
+            echo "Checking the API health endpoint..."
+            ok=""
+            for i in $(seq 1 20); do
+              if docker compose exec -T api wget -qO- http://127.0.0.1:8080/health | grep -q '"ok"'; then ok=1; break; fi
+              sleep 3
+            done
+            [ -n "$ok" ] || { echo "::error::API /health did not answer"; docker compose logs --tail=60 api; exit 1; }
+            # Record the fresh start only after a healthy deploy, so a failed first run wipes again.
+            [ -z "$FRESH" ] || date -u +%Y-%m-%dT%H:%M:%SZ > .fresh-db-initialized
+            echo "Production is up. Make an admin with: docker exec -it showcase-prod-api /app/seed email@example.com"

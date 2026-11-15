@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/service"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
 )
 
 // ---- Gorm models (private to this package) ----
@@ -148,24 +149,28 @@ func (r *UserRepo) LinkFirebase(ctx context.Context, userID, uid, provider strin
 	return nil
 }
 
-// UpsertAdmin is used by the seed command only: it creates the Admin or, if the
-// email already exists, promotes it and resets its name and password.
-func (r *UserRepo) UpsertAdmin(ctx context.Context, u *service.User) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+// PromoteToAdmin makes the user with this email an Admin. It is used by the seed
+// command only and never creates an account: an unknown email returns
+// service.ErrNotFound. changed is false when the user already was an Admin.
+func (r *UserRepo) PromoteToAdmin(ctx context.Context, email string) (changed bool, err error) {
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var m userModel
-		err := tx.Where("email = ?", u.Email).First(&m).Error
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			nm := newUserModel(u)
-			return tx.Create(&nm).Error
-		}
-		if err != nil {
+		if err := tx.Where("email = ?", email).First(&m).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return service.ErrNotFound
+			}
 			return err
 		}
-		return tx.Model(&userModel{}).Where("id = ?", m.ID).Updates(map[string]any{
-			"display_name": u.DisplayName, "password_hash": u.PasswordHash, "role": u.Role,
-			"email_verified_at": gorm.Expr("COALESCE(email_verified_at, ?)", time.Now()),
-		}).Error
+		if m.Role == identity.RoleAdmin {
+			return nil
+		}
+		if err := tx.Model(&userModel{}).Where("id = ?", m.ID).Update("role", identity.RoleAdmin).Error; err != nil {
+			return err
+		}
+		changed = true
+		return nil
 	})
+	return changed, err
 }
 
 // ---- Sessions ----

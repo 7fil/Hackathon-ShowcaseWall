@@ -24,10 +24,11 @@ type Config struct {
 	ResendFrom     string
 	FrontendOrigin string
 	TrustedProxies []string
-	AdminEmail     string
-	AdminPassword  string
-	AdminName      string
-	AdminEmails    []string // every email that becomes Admin on OAuth sign-up (includes ADMIN_EMAIL)
+
+	// Logging. Version is the image tag or git SHA stamped at build time.
+	LogLevel  string
+	LogFormat string
+	Version   string
 
 	FirebaseProjectID       string
 	FirebaseCredentialsJSON string
@@ -37,7 +38,18 @@ type Config struct {
 	MediaLocalDir string
 }
 
-func (c Config) IsProduction() bool { return c.Env == "production" }
+const (
+	EnvDevelopment = "development"
+	EnvStaging     = "staging"
+	EnvProduction  = "production"
+)
+
+func (c Config) IsProduction() bool  { return c.Env == EnvProduction }
+func (c Config) IsDevelopment() bool { return c.Env == EnvDevelopment }
+
+// IsDeployed is true for staging and production: real infrastructure that must never
+// run with development shortcuts (printed login codes, insecure cookies, debug output).
+func (c Config) IsDeployed() bool { return c.Env == EnvStaging || c.Env == EnvProduction }
 
 // Load reads and validates the configuration for the API server.
 func Load() (Config, error) {
@@ -48,24 +60,15 @@ func Load() (Config, error) {
 	return c, c.validate()
 }
 
-// LoadSeed reads only what the seed command needs (database and Admin account).
+// LoadSeed reads only what the admin command needs: the database. Admins are never
+// described in environment variables; the command takes the emails as arguments.
 func LoadSeed() (Config, error) {
 	c, err := parse()
 	if err != nil {
 		return c, err
 	}
-	var missing []string
 	if c.DatabaseURL == "" {
-		missing = append(missing, "DATABASE_URL")
-	}
-	if c.AdminEmail == "" {
-		missing = append(missing, "ADMIN_EMAIL")
-	}
-	if c.AdminPassword == "" {
-		missing = append(missing, "ADMIN_PASSWORD")
-	}
-	if len(missing) > 0 {
-		return c, fmt.Errorf("missing required env: %s", strings.Join(missing, ", "))
+		return c, errors.New("missing required env: DATABASE_URL")
 	}
 	return c, nil
 }
@@ -81,9 +84,9 @@ func parse() (Config, error) {
 		ResendAPIKey:   os.Getenv("RESEND_API_KEY"),
 		ResendFrom:     os.Getenv("RESEND_FROM"),
 		FrontendOrigin: strings.TrimRight(get("FRONTEND_ORIGIN", "https://group5.bccdev.id"), "/"),
-		AdminEmail:     strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_EMAIL"))),
-		AdminPassword:  os.Getenv("ADMIN_PASSWORD"),
-		AdminName:      get("ADMIN_NAME", "Admin"),
+		LogLevel:       strings.ToLower(get("LOG_LEVEL", "")),
+		LogFormat:      strings.ToLower(get("LOG_FORMAT", "")),
+		Version:        get("APP_VERSION", ""),
 
 		FirebaseProjectID:       os.Getenv("FIREBASE_PROJECT_ID"),
 		FirebaseCredentialsJSON: strings.TrimSpace(os.Getenv("FIREBASE_CREDENTIALS_JSON")),
@@ -91,9 +94,20 @@ func parse() (Config, error) {
 
 		MediaLocalDir: get("MEDIA_LOCAL_DIR", "./data/media"),
 	}
-	c.AdminEmails = splitEmails(os.Getenv("ADMIN_EMAILS"))
-	if c.AdminEmail != "" {
-		c.AdminEmails = append(c.AdminEmails, c.AdminEmail)
+	switch c.Env {
+	case EnvDevelopment, EnvStaging, EnvProduction:
+	default:
+		return c, fmt.Errorf("APP_ENV must be %s, %s or %s (got %q)", EnvDevelopment, EnvStaging, EnvProduction, c.Env)
+	}
+	switch c.LogLevel {
+	case "", "debug", "info", "warn", "warning", "error":
+	default:
+		return c, errors.New("LOG_LEVEL must be debug, info, warn or error")
+	}
+	switch c.LogFormat {
+	case "", "json", "text":
+	default:
+		return c, errors.New("LOG_FORMAT must be json or text")
 	}
 	var err error
 	if c.CookieSecure, err = boolEnv("COOKIE_SECURE", true); err != nil {
@@ -135,13 +149,16 @@ func (c Config) validate() error {
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required env: %s", strings.Join(missing, ", "))
 	}
-	if c.IsProduction() {
+	if c.IsDeployed() {
 		if c.DevPrintOTP {
-			return errors.New("DEV_PRINT_OTP must be false in production")
+			return fmt.Errorf("DEV_PRINT_OTP must be false in %s", c.Env)
 		}
 		if c.ResendAPIKey == "" || c.ResendFrom == "" {
-			return errors.New("RESEND_API_KEY and RESEND_FROM are required in production")
+			return fmt.Errorf("RESEND_API_KEY and RESEND_FROM are required in %s", c.Env)
 		}
+	}
+	if c.IsProduction() && !c.CookieSecure {
+		return errors.New("COOKIE_SECURE must be true in production")
 	}
 	if !c.DevPrintOTP && (c.ResendAPIKey == "" || c.ResendFrom == "") {
 		return errors.New("set RESEND_API_KEY and RESEND_FROM, or enable DEV_PRINT_OTP for local development")
@@ -166,16 +183,6 @@ func boolEnv(key string, def bool) (bool, error) {
 		return false, fmt.Errorf("%s must be true or false", key)
 	}
 	return b, nil
-}
-
-func splitEmails(v string) []string {
-	var out []string
-	for _, e := range strings.Split(v, ",") {
-		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
-			out = append(out, e)
-		}
-	}
-	return out
 }
 
 // FirebaseEnabled reports whether Firebase credentials were provided.

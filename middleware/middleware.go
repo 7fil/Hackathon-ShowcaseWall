@@ -7,8 +7,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -34,20 +36,49 @@ type Limiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (allowed bool, retryAfter time.Duration, err error)
 }
 
-// RequestID assigns an ID to each request and echoes it in X-Request-ID.
+// RequestID assigns an ID to each request and echoes it in X-Request-ID. An ID sent by a
+// trusted reverse proxy is kept so one request can be followed across services; anything
+// that is not a short token of letters, digits, "-" or "_" is replaced, which also keeps
+// log-injection payloads out of the logs.
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		b := make([]byte, 8)
-		_, _ = rand.Read(b)
-		id := hex.EncodeToString(b)
+		id := c.GetHeader("X-Request-ID")
+		if !validRequestID(id) {
+			b := make([]byte, 8)
+			_, _ = rand.Read(b)
+			id = hex.EncodeToString(b)
+		}
 		c.Set(response.CtxRequestID, id)
 		c.Header("X-Request-ID", id)
 		c.Next()
 	}
 }
 
+func validRequestID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// slowRequest is the latency above which a successful request is logged as a warning.
+const slowRequest = 2 * time.Second
+
+// quietRoutes are polled constantly (load balancer and Docker health checks), so they are
+// logged at debug level instead of filling the log with one line every few seconds.
+var quietRoutes = map[string]bool{"/health": true}
+
 // AccessLog writes one JSON line per request and records Prometheus HTTP metrics.
-// It logs the route template, never the query string, headers, cookies or bodies.
+// The level follows the outcome: 5xx is an error, 4xx and slow requests are warnings,
+// the rest is info. It logs the route template, never the query string, headers,
+// cookies or bodies.
 func AccessLog(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -67,21 +98,47 @@ func AccessLog(log *slog.Logger) gin.HandlerFunc {
 			"route", route,
 			"status", status,
 			"latency_ms", dur.Milliseconds(),
+			"bytes", c.Writer.Size(),
 			"ip", c.ClientIP(),
+			"user_agent", truncate(c.Request.UserAgent(), 200),
 		}
 		if id, ok := IdentityFrom(c); ok {
 			attrs = append(attrs, "user_id", id.UserID)
 		}
-		log.Info("request", attrs...)
+
+		level := slog.LevelInfo
+		switch {
+		case status >= 500:
+			level = slog.LevelError
+		case status >= 400, dur > slowRequest:
+			level = slog.LevelWarn
+		case quietRoutes[route]:
+			level = slog.LevelDebug
+		}
+		log.Log(c.Request.Context(), level, "request", attrs...)
 	}
 }
 
-// Recovery turns a panic into a 500 using the standard error body.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// Recovery turns a panic into a 500 using the standard error body. The panic value and
+// stack trace go to the log (never to the client) so the cause can be found.
 func Recovery(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error("panic recovered", "request_id", response.RequestID(c), "route", c.FullPath())
+				log.Error("panic recovered",
+					"request_id", response.RequestID(c),
+					"method", c.Request.Method,
+					"route", c.FullPath(),
+					"panic", fmt.Sprint(r),
+					"stack", string(debug.Stack()),
+				)
 				response.Fail(c, apperr.Internal(errors.New("panic")))
 			}
 		}()
