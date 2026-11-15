@@ -1,0 +1,20 @@
+# Scrapes the API's internal metrics port (9100). That port is NOT published on the
+# VM; Prometheus reaches it over the Docker network by service name.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  - job_name: showcase-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:9100"]
+        labels:
+          env: staging
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

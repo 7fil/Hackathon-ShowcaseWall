@@ -89,3 +89,18 @@ Required GitHub Repository Secrets:
 - Tests: `go test -race ./...` (admin and media service rules, local storage, `pkg/pgarray`).
 
 1
+## Monitoring (Prometheus + Grafana)
+
+`docker compose up -d` starts Prometheus (7 days of data, 512 MB) and Grafana (256 MB) next to the API.
+Prometheus scrapes the API's internal metrics port `api:9100` over the Docker network; that port is never published.
+Both UIs listen on the VM's loopback only, so they are not reachable from the internet:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 <user>@<vm>
+# Grafana    http://localhost:3000   (GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD)
+# Prometheus http://localhost:9090   (Alerts tab shows monitoring/prometheus/alerts.yml)
+```
+
+The datasource and the **Showcase Wall — API** dashboard (traffic, errors, latency by route, WebSocket, logins/OTP, works actions, media, cache, runtime) are provisioned from `monitoring/` and read-only in the UI; edit the JSON and redeploy.
+
+Staging deploy (`.github/workflows/deploy-staging.yml`) copies `monitoring/`, writes `GRAFANA_ADMIN_PASSWORD` from the GitHub secret of the same name into `/opt/bcc-showcase/.env`, and fails the deploy if Prometheus cannot scrape the API or Grafana cannot load the dashboard and datasource.

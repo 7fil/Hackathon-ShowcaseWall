@@ -6,11 +6,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
+
+var processStart = time.Now()
 
 var Default = NewRegistry()
 
@@ -200,7 +204,16 @@ func (r *Registry) WritePrometheus(w io.Writer) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	lastFamily := ""
 	for _, k := range keys {
+		family := k
+		if i := strings.IndexByte(k, '{'); i >= 0 {
+			family = k[:i]
+		}
+		if family != lastFamily {
+			fmt.Fprintf(&b, "# TYPE %s counter\n", family)
+			lastFamily = family
+		}
 		val := atomic.LoadInt64(r.counters[k])
 		fmt.Fprintf(&b, "%s %d\n", k, val)
 	}
@@ -226,5 +239,18 @@ func (r *Registry) WritePrometheus(w io.Writer) {
 	}
 	r.mu.RUnlock()
 
+	writeRuntime(&b)
 	_, _ = io.WriteString(w, b.String())
+}
+
+// writeRuntime adds process and Go runtime gauges so the dashboard can show
+// uptime, memory and goroutines without an extra exporter.
+func writeRuntime(b *strings.Builder) {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	fmt.Fprintf(b, "# TYPE process_start_time_seconds gauge\nprocess_start_time_seconds %d\n", processStart.Unix())
+	fmt.Fprintf(b, "# TYPE go_goroutines gauge\ngo_goroutines %d\n", runtime.NumGoroutine())
+	fmt.Fprintf(b, "# TYPE go_memstats_heap_alloc_bytes gauge\ngo_memstats_heap_alloc_bytes %d\n", m.HeapAlloc)
+	fmt.Fprintf(b, "# TYPE go_memstats_sys_bytes gauge\ngo_memstats_sys_bytes %d\n", m.Sys)
+	fmt.Fprintf(b, "# TYPE go_gc_cycles_total counter\ngo_gc_cycles_total %d\n", m.NumGC)
 }

@@ -1,0 +1,36 @@
+# Alert rules are evaluated by Prometheus and visible in its UI (Alerts tab) and in
+# Grafana's Prometheus datasource. No Alertmanager is wired up yet.
+groups:
+  - name: showcase-api
+    rules:
+      - alert: ApiDown
+        expr: up{job="showcase-api"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "API metrics endpoint is not reachable"
+
+      - alert: HighServerErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total[5m])), 0.001) > 0.05
+          and sum(rate(http_requests_total[5m])) > 0.1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 5% of requests answer 5xx"
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{route!~".*/ws/wall"}[5m]))) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 request latency is above 1s"
+
+      - alert: LoginFailureSpike
+        expr: sum(increase(login_attempts_total{result="failed"}[10m])) > 50
+        labels: { severity: warning }
+        annotations:
+          summary: "More than 50 failed logins in 10 minutes"

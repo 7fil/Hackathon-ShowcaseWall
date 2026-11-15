@@ -33,20 +33,69 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.VM_PORT }}
-          source: "bcc-showcase-app.tar,docker-compose.yml"
+          source: "bcc-showcase-app.tar,docker-compose.yml,monitoring"
           target: "/opt/bcc-showcase"
 
-      - name: Load image and restart container on VM
+      - name: Load image, restart stack and verify monitoring on VM
         uses: appleboy/ssh-action@v1.1.0
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
         with:
           host: ${{ secrets.VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.VM_PORT }}
+          envs: GRAFANA_ADMIN_PASSWORD
           script: |
             set -e
             cd /opt/bcc-showcase
+            touch .env
+
+            # Grafana admin password: written from the GitHub secret, kept in .env on the VM.
+            if [ -n "$GRAFANA_ADMIN_PASSWORD" ]; then
+              grep -v '^GRAFANA_ADMIN_PASSWORD=' .env > .env.tmp || true
+              printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$GRAFANA_ADMIN_PASSWORD" >> .env.tmp
+              mv .env.tmp .env
+              chmod 600 .env
+            fi
+            if ! grep -q '^GRAFANA_ADMIN_PASSWORD=.' .env; then
+              echo "::error::GRAFANA_ADMIN_PASSWORD is not set: add it as a GitHub secret (or put it in /opt/bcc-showcase/.env)"
+              exit 1
+            fi
+            GRAFANA_PORT=$(grep '^GRAFANA_PORT=' .env | cut -d= -f2- || true); GRAFANA_PORT=${GRAFANA_PORT:-3000}
+            GRAFANA_USER=$(grep '^GRAFANA_ADMIN_USER=' .env | cut -d= -f2- || true); GRAFANA_USER=${GRAFANA_USER:-admin}
+            GRAFANA_PASS=$(grep '^GRAFANA_ADMIN_PASSWORD=' .env | cut -d= -f2-)
+
             docker load -i bcc-showcase-app.tar
             rm -f bcc-showcase-app.tar
-            docker compose up -d --no-build
+            docker compose up -d --no-build --remove-orphans
+            # Config files are bind-mounted, so reload Prometheus in case only they changed.
+            docker compose exec -T prometheus wget -qO- --post-data= http://localhost:9090/-/reload >/dev/null || true
             docker image prune -f
+
+            echo "Waiting for Prometheus to scrape the API..."
+            ok=""
+            for i in $(seq 1 30); do
+              if docker compose exec -T prometheus wget -qO- 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22showcase-api%22%7D' | grep -q '"1"\]'; then ok=1; break; fi
+              sleep 3
+            done
+            if [ -z "$ok" ]; then
+              echo "::error::Prometheus cannot scrape api:9100"
+              docker compose ps
+              docker compose logs --tail=40 prometheus api
+              exit 1
+            fi
+
+            echo "Checking Grafana datasource and dashboard..."
+            ok=""
+            for i in $(seq 1 20); do
+              if curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASS" "http://127.0.0.1:$GRAFANA_PORT/api/dashboards/uid/showcase-wall" >/dev/null 2>&1 \
+                 && curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASS" "http://127.0.0.1:$GRAFANA_PORT/api/datasources/uid/prometheus/health" | grep -q '"OK"'; then ok=1; break; fi
+              sleep 3
+            done
+            if [ -z "$ok" ]; then
+              echo "::error::Grafana dashboard or Prometheus datasource is not healthy"
+              docker compose logs --tail=40 grafana
+              exit 1
+            fi
+            echo "Monitoring OK"
