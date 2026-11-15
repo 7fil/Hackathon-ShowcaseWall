@@ -131,7 +131,6 @@ Required GitHub Repository Secrets:
 - Status changes are conditional updates (`409` for the loser of a race). Featuring runs under a Postgres advisory lock and clears the previous mark in the same transaction.
 - Tests: all of them live in `test/` (see `test/README.md`); run `go test -race ./...` or `go test -race ./test/...`.
 
-1
 ## Monitoring (Prometheus + Grafana + Loki)
 
 `docker compose up -d` starts Prometheus (7 days of data, 512 MB) and Grafana (256 MB) next to the API.
