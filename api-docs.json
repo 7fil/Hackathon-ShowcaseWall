@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "BCC Showcase Wall API",
-    "version": "1.0.0",
-    "description": "RESTful API & WebSocket contract for **BCC Showcase Wall** — **Apidog Ready with Auto-Fill Tokens & Prefilled Examples**.\n\n### ⚡ Apidog Zero-Guessing Quickstart (Auto-Fill Enabled)\n1. **Import this `api-docs.json` into Apidog** (Settings → Import → OpenAPI/Swagger).\n2. **One-Click Login (Auto-Saves `{{access_token}}`)**:\n   - Open **`POST /api/v1/auth/login`** → Select the **\"Seeded Admin Login\"** example → Click **Send**.\n   - Returns `200 OK` immediately (no OTP required for verified accounts!) and automatically saves `data.access_token` into your Apidog `{{access_token}}` environment variable and sets the `refresh_token` HttpOnly cookie.\n3. **Create a Work (Auto-Saves `{{work_id}}`)**:\n   - Open **`POST /api/v1/works`** → All form fields (`title`, `summary`, `description`, `benefits`, `category`, `tech_stack`, `team_members`, `demo_url`, `repo_url`) are pre-filled! Just pick any `.jpg`/`.png`/`.webp` file for `cover` and click **Send**.\n   - Automatically saves `data.id` into `{{work_id}}`, so all `/works/{id}` and `/admin/works/{id}/*` endpoints are pre-filled with your newly created work ID!\n\n### 🔌 WebSocket Contract (`WS /ws/wall`)\n- **URL**: `wss://group5-be.bccdev.id/ws/wall` (or `ws://localhost:8080/ws/wall`)\n- **Access**: Public, read-only.\n- **Envelope**: `{ \"type\": string, \"seq\": number, \"payload\": object }`\n- **Events**: `work.published`, `work.unpublished`, `work.deleted`"
+    "version": "1.1.0",
+    "description": "RESTful API & WebSocket contract for **BCC Showcase Wall** — **Apidog Ready with Auto-Fill JWT Tokens, Chained IDs & Prefilled Examples**.\n\n### ⚡ Apidog Zero-Guessing Quickstart (Auto-Fill Enabled)\n1. **Import this `api-docs.json` into Apidog** (`Settings` → `Import Data` → `OpenAPI/Swagger`).\n2. **One-Click Login (Auto-Saves `{{access_token}}`)**:\n   - Open **`POST /api/v1/auth/login`** → Select an example (e.g., **\"1. Seeded Admin\"** or **\"3. Contributor\"**) → Click **Send**.\n   - Immediately returns `200 OK` and automatically saves `data.access_token` into your Apidog `{{access_token}}` environment/global variable and sets the `refresh_token` HttpOnly cookie.\n   - Every protected endpoint is pre-configured with both `BearerAuth` and a pre-filled `Authorization: Bearer {{access_token}}` header so your JWT token is sent automatically!\n3. **Create a Work (Auto-Saves `{{work_id}}`)**:\n   - Open **`POST /api/v1/works`** → All form fields (`title`, `summary`, `description`, `benefits`, `category`, `tech_stack`, `team_members`, `demo_url`, `repo_url`) are pre-filled! Just pick any `.jpg`/`.png`/`.webp` file for `cover` and click **Send**.\n   - Automatically saves `data.id` into `{{work_id}}`, so all `/works/{id}`, `/me/works/{id}`, `/media/works/{id}/*`, and `/admin/works/{id}/*` endpoints are automatically pre-filled!\n4. **Add a Screenshot (Auto-Saves `{{screenshot_id}}`)**:\n   - Open **`POST /api/v1/works/{id}/screenshots`** → Upload an `image` file and click **Send**.\n   - Automatically saves `data.id` into `{{screenshot_id}}` for `GET /api/v1/media/works/{id}/screenshots/{imageId}` and `DELETE /api/v1/works/{id}/screenshots/{imageId}`.\n\n### 🔌 WebSocket Contract (`GET /ws/wall` & `GET /api/v1/ws/wall`)\n- **URL**: `wss://group5-be.bccdev.id/ws/wall` (or `ws://localhost:8080/ws/wall`)\n- **Access**: Public, read-only.\n- **Envelope**: `{ \"type\": string, \"seq\": number, \"payload\": object }`\n- **Events**: `work.published`, `work.unpublished`, `work.deleted`"
   },
   "servers": [
     {
@@ -26,19 +26,23 @@
     },
     {
       "name": "Works (Public)",
-      "description": "Public gallery, featured work, exhibition mode, facets, and detail (Planned Contract)"
+      "description": "Public gallery, featured work, exhibition mode, facets, and detail (Implemented)"
     },
     {
       "name": "Works (Contributor & Owner)",
-      "description": "Contributor dashboard summary, owned works list, preview, and CRUD (Planned Contract)"
+      "description": "Contributor dashboard summary, owned works list, preview, CRUD, and screenshots (Implemented)"
     },
     {
       "name": "Admin",
-      "description": "Admin moderation: all works list, global summary, publish, unpublish, and feature (Planned Contract)"
+      "description": "Admin moderation: all works list, global summary, publish, unpublish, and feature (Implemented)"
     },
     {
       "name": "Media",
-      "description": "Stable cover streaming for Published works (Planned Contract)"
+      "description": "Stable and signed cover & screenshot streaming (Implemented)"
+    },
+    {
+      "name": "Realtime (WebSocket)",
+      "description": "Public read-only WebSocket feed for live showcase wall updates (Implemented)"
     }
   ],
   "components": {
@@ -47,13 +51,61 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "Uses `{{access_token}}` automatically populated when you call `/api/v1/auth/login`, `/api/v1/auth/otp/verify`, `/api/v1/auth/oauth/firebase`, or `/api/v1/auth/refresh`."
+        "description": "JWT Bearer Token (`Authorization: Bearer {{access_token}}`). Automatically populated when you call `/api/v1/auth/login`, `/api/v1/auth/otp/verify`, `/api/v1/auth/oauth/firebase`, or `/api/v1/auth/refresh`."
       },
       "RefreshCookie": {
         "type": "apiKey",
         "in": "cookie",
         "name": "refresh_token",
         "description": "1-day HttpOnly refresh token cookie scoped to `/api/v1/auth`."
+      }
+    },
+    "parameters": {
+      "AuthorizationHeader": {
+        "name": "Authorization",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "default": "Bearer {{access_token}}",
+          "example": "Bearer {{access_token}}"
+        },
+        "description": "Auto-filled JWT Bearer token from `{{access_token}}` (populated automatically on Login / Verify OTP / OAuth / Refresh)."
+      },
+      "OriginHeader": {
+        "name": "Origin",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "default": "https://group5.bccdev.id",
+          "example": "https://group5.bccdev.id"
+        },
+        "description": "Pre-filled allowed Frontend Origin (`FRONTEND_ORIGIN` or `http://localhost:*`) for CSRF/Origin verification."
+      },
+      "WorkIdPath": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid",
+          "default": "{{work_id}}",
+          "example": "550e8400-e29b-41d4-a716-446655440000"
+        },
+        "description": "Work UUID (auto-filled from `{{work_id}}` after creating or publishing a work)."
+      },
+      "ScreenshotIdPath": {
+        "name": "imageId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid",
+          "default": "{{screenshot_id}}",
+          "example": "9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
+        },
+        "description": "Screenshot UUID (auto-filled from `{{screenshot_id}}` after uploading a screenshot)."
       }
     },
     "schemas": {
@@ -152,6 +204,25 @@
           "status": {
             "type": "string",
             "example": "code_sent"
+          }
+        }
+      },
+      "Screenshot": {
+        "type": "object",
+        "required": [
+          "id",
+          "url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
+          },
+          "url": {
+            "type": "string",
+            "description": "Stable URL for a `Published` work; a backend-signed URL (`?exp=...&sig=...`, valid 10 minutes) for `Draft` or `Unpublished` works.",
+            "example": "/api/v1/media/works/550e8400-e29b-41d4-a716-446655440000/screenshots/9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
           }
         }
       },
@@ -336,7 +407,7 @@
           },
           "cover_url": {
             "type": "string",
-            "example": "/api/v1/media/works/550e8400-e29b-41d4-a716-446655440000/cover?sig=..."
+            "example": "/api/v1/media/works/550e8400-e29b-41d4-a716-446655440000/cover?exp=1794733800&sig=4f8a..."
           },
           "demo_url": {
             "type": "string",
@@ -383,7 +454,7 @@
           },
           "screenshots": {
             "type": "array",
-            "description": "Extra screenshots (0 to 5), in upload order.",
+            "description": "Extra screenshots (0 to 5), in upload order. Present on contributor/owner endpoints (`GET /api/v1/me/works`, `GET /api/v1/me/works/{id}`, `POST /api/v1/works`, `PATCH /api/v1/works/{id}`).",
             "items": {
               "$ref": "#/components/schemas/Screenshot"
             }
@@ -423,26 +494,35 @@
           "next_cursor": {
             "type": "string",
             "nullable": true,
-            "example": "eyJwdWJsaXNoZWRfYXQiOiIyMDI2LTExLTE1VDA5OjAwOjAwWiIsImlkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIn0="
+            "example": "eyJ0IjoiMjAyNi0xMS0xNVQwOTowMDowMFoiLCJpZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCJ9"
           }
         }
       },
-      "Screenshot": {
+      "WsEventEnvelope": {
         "type": "object",
         "required": [
-          "id",
-          "url"
+          "type",
+          "seq",
+          "payload"
         ],
         "properties": {
-          "id": {
+          "type": {
             "type": "string",
-            "format": "uuid",
-            "example": "9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
+            "enum": [
+              "work.published",
+              "work.unpublished",
+              "work.deleted"
+            ],
+            "example": "work.published"
           },
-          "url": {
-            "type": "string",
-            "description": "Stable URL for a `Published` work; a backend-signed URL (valid about 10 minutes) for any other status.",
-            "example": "/api/v1/media/works/550e8400-e29b-41d4-a716-446655440000/screenshots/9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
+          "seq": {
+            "type": "integer",
+            "format": "int64",
+            "example": 42
+          },
+          "payload": {
+            "type": "object",
+            "description": "For `work.published`, contains public card fields (`id`, `title`, `summary`, `category`, `tech_stack`, `team_members`, `cover_url`, `published_at`). For `work.unpublished` and `work.deleted`, contains `{ \"id\": \"<uuid>\" }`."
           }
         }
       }
@@ -454,6 +534,8 @@
         "tags": [
           "Health"
         ],
+        "x-apidog-folder": "Health",
+        "x-apidog-status": "released",
         "summary": "Health Check",
         "description": "Availability probe used by Docker healthcheck and deployment checks.",
         "operationId": "getHealth",
@@ -475,6 +557,11 @@
                       }
                     }
                   }
+                },
+                "example": {
+                  "data": {
+                    "status": "ok"
+                  }
                 }
               }
             }
@@ -487,6 +574,8 @@
         "tags": [
           "Auth"
         ],
+        "x-apidog-folder": "Auth",
+        "x-apidog-status": "released",
         "summary": "Start Registration (Send OTP)",
         "description": "Validates `name` (2-100 chars), `email`, and `password` (8-72 bytes), stores a pending registration in Redis for 10 minutes, and sends a 6-digit OTP code via Resend. Rate-limited to 20 requests/hour per IP and 1 code/min, 5 codes/hour per email.",
         "operationId": "registerUser",
@@ -520,7 +609,7 @@
                     "type": "string",
                     "minLength": 8,
                     "maxLength": 72,
-                    "example": "SecretPass123!",
+                    "example": "123456789",
                     "default": "123456789"
                   }
                 }
@@ -532,10 +621,18 @@
               },
               "examples": {
                 "contributor_register": {
-                  "summary": "Register New Contributor (Sends 6-Digit OTP)",
+                  "summary": "1. Register New Contributor (Sends 6-Digit OTP)",
                   "value": {
                     "name": "Bagas Pratama",
                     "email": "bagas@bccdev.id",
+                    "password": "123456789"
+                  }
+                },
+                "admin_candidate_register": {
+                  "summary": "2. Register Admin Candidate (Promote via /app/seed after OTP)",
+                  "value": {
+                    "name": "Admin Showcase",
+                    "email": "admin123@showcase.com",
                     "password": "123456789"
                   }
                 }
@@ -554,6 +651,11 @@
                     "data": {
                       "$ref": "#/components/schemas/CodeSentData"
                     }
+                  }
+                },
+                "example": {
+                  "data": {
+                    "status": "code_sent"
                   }
                 }
               }
@@ -635,6 +737,8 @@
         "tags": [
           "Auth"
         ],
+        "x-apidog-folder": "Auth",
+        "x-apidog-status": "released",
         "summary": "Login with Email & Password (Direct Token & Auto-Fill)",
         "description": "Verifies `email` and `password` for a verified account and **immediately returns `200 OK`** with `access_token`, `user`, and sets the `HttpOnly` `refresh_token` cookie (no OTP step needed on login!). Automatically saves `access_token` to Apidog's `{{access_token}}` variable.",
         "operationId": "loginUser",
@@ -693,42 +797,6 @@
           }
         },
         "responses": {
-          "401": {
-            "description": "Wrong email or password (`invalid_credentials`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                },
-                "example": {
-                  "error": {
-                    "code": "invalid_credentials",
-                    "message": "Email atau password salah"
-                  }
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Field validation failed (`validation_failed`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit exceeded (`rate_limited`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
           "200": {
             "description": "Login succeeded; returns access_token + user and sets refresh_token cookie",
             "headers": {
@@ -748,6 +816,68 @@
                       "$ref": "#/components/schemas/AuthSuccessData"
                     }
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON body (`invalid_json`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Wrong email or password (`invalid_credentials`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "invalid_credentials",
+                    "message": "Email atau password salah"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Account email is not verified (`email_not_verified`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "email_not_verified",
+                    "message": "Email belum diverifikasi, silakan selesaikan registrasi"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Field validation failed (`validation_failed`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded (`rate_limited` - 5 failed attempts/15m per email or 20 req/h per IP)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -777,8 +907,10 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Verify 6-Digit OTP Code (Register or Login)",
-        "description": "Verifies the 6-digit OTP code (valid 10m, max 5 attempts, single use). On `purpose: \"register\"`, creates the Contributor account. Returns `access_token` + `user` in JSON and sets the `HttpOnly` `refresh_token` cookie.",
+        "x-apidog-folder": "Auth",
+        "x-apidog-status": "released",
+        "summary": "Verify 6-Digit OTP Code (Register or Login & Auto-Fill Token)",
+        "description": "Verifies the 6-digit OTP code (valid 10m, max 5 attempts, single use). On `purpose: \"register\"`, creates the Contributor account. Returns `access_token` + `user` in JSON, sets the `HttpOnly` `refresh_token` cookie, and auto-saves `{{access_token}}`.",
         "operationId": "verifyOtp",
         "requestBody": {
           "required": true,
@@ -801,7 +933,7 @@
                   "code": {
                     "type": "string",
                     "pattern": "^[0-9]{6}$",
-                    "example": "482910",
+                    "example": "123456",
                     "default": "123456"
                   },
                   "purpose": {
@@ -810,7 +942,7 @@
                       "register",
                       "login"
                     ],
-                    "example": "login",
+                    "example": "register",
                     "default": "register"
                   }
                 }
@@ -822,11 +954,19 @@
               },
               "examples": {
                 "verify_registration": {
-                  "summary": "Verify Registration OTP (Creates Contributor & Auto-Fills Token)",
+                  "summary": "1. Verify Registration OTP (Creates Contributor & Auto-Fills Token)",
                   "value": {
                     "email": "bagas@bccdev.id",
                     "code": "123456",
                     "purpose": "register"
+                  }
+                },
+                "verify_login": {
+                  "summary": "2. Verify Login OTP",
+                  "value": {
+                    "email": "bagas@bccdev.id",
+                    "code": "123456",
+                    "purpose": "login"
                   }
                 }
               }
@@ -853,6 +993,16 @@
                       "$ref": "#/components/schemas/AuthSuccessData"
                     }
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON body (`invalid_json`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -938,6 +1088,8 @@
         "tags": [
           "Auth"
         ],
+        "x-apidog-folder": "Auth",
+        "x-apidog-status": "released",
         "summary": "Resend OTP Code",
         "description": "Issues a new 6-digit OTP code and resets attempt count if a pending step exists. Always returns `202 Accepted` when within rate limits so callers cannot probe account state.",
         "operationId": "resendOtp",
@@ -972,6 +1124,15 @@
               "example": {
                 "email": "bagas@bccdev.id",
                 "purpose": "register"
+              },
+              "examples": {
+                "resend_register": {
+                  "summary": "Resend Registration OTP",
+                  "value": {
+                    "email": "bagas@bccdev.id",
+                    "purpose": "register"
+                  }
+                }
               }
             }
           }
@@ -988,6 +1149,16 @@
                       "$ref": "#/components/schemas/CodeSentData"
                     }
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON body (`invalid_json`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1020,8 +1191,10 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Sign In / Sign Up with Firebase OAuth (Google)",
-        "description": "Exchanges a Firebase ID Token (`id_token`) obtained on the frontend for a backend session (`access_token` + `HttpOnly` `refresh_token` cookie) without requiring an email OTP code.\n\n**Account Resolution Rules:**\n- **Returning OAuth User**: Matched by `firebase_uid`.\n- **Existing Local User (Unlinked)**: Automatically links `firebase_uid` to the existing account and sets `auth_provider = \"both\"`.\n- **New Email**: Creates user with `password_hash = NULL`, `auth_provider = \"google\"`, and role `Contributor`. Admins are created only on the server with the `/app/seed` command.\n- **Conflict**: If the email is already linked to a different `firebase_uid`, returns `409 oauth_account_conflict`.",
+        "x-apidog-folder": "Auth",
+        "x-apidog-status": "released",
+        "summary": "Sign In / Sign Up with Firebase OAuth (Google & Auto-Fill Token)",
+        "description": "Exchanges a Firebase ID Token (`id_token`) obtained on the frontend for a backend session (`access_token` + `HttpOnly` `refresh_token` cookie) without requiring an email OTP code. Automatically saves `{{access_token}}`.\n\n**Account Resolution Rules:**\n- **Returning OAuth User**: Matched by `firebase_uid`.\n- **Existing Local User (Unlinked)**: Automatically links `firebase_uid` to the existing account and sets `auth_provider = \"both\"`.\n- **New Email**: Creates user with `password_hash = NULL`, `auth_provider = \"google\"`, and role `Contributor`. Admins are created only on the server with the `/app/seed` command.\n- **Conflict**: If the email is already linked to a different `firebase_uid`, returns `409 oauth_account_conflict`.",
         "operationId": "oauthFirebase",
         "requestBody": {
           "required": true,
@@ -1036,13 +1209,21 @@
                   "id_token": {
                     "type": "string",
                     "description": "Firebase ID Token returned by `userCredential.user.getIdToken()`",
-                    "example": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2...",
+                    "example": "{{firebase_id_token}}",
                     "default": "{{firebase_id_token}}"
                   }
                 }
               },
               "example": {
                 "id_token": "{{firebase_id_token}}"
+              },
+              "examples": {
+                "firebase_oauth": {
+                  "summary": "Exchange Firebase ID Token",
+                  "value": {
+                    "id_token": "{{firebase_id_token}}"
+                  }
+                }
               }
             }
           }
@@ -1067,6 +1248,16 @@
                       "$ref": "#/components/schemas/AuthSuccessData"
                     }
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed JSON body (`invalid_json`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -1189,12 +1380,19 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Rotate Refresh Token & Issue New Access Token",
-        "description": "Reads the `refresh_token` HttpOnly cookie, rotates the session in PostgreSQL, sets a new `refresh_token` cookie, and returns a new 15-minute `access_token`. Presenting a previously rotated token revokes the entire session family (`invalid_session`).",
+        "x-apidog-folder": "Auth",
+        "x-apidog-status": "released",
+        "summary": "Rotate Refresh Token & Issue New Access Token (Auto-Fills Token)",
+        "description": "Reads the `refresh_token` HttpOnly cookie, rotates the session in PostgreSQL, sets a new `refresh_token` cookie, and returns a new 15-minute `access_token` (automatically updating `{{access_token}}`). Presenting a previously rotated token revokes the entire session family (`invalid_session`).",
         "operationId": "refreshSession",
         "security": [
           {
             "RefreshCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/OriginHeader"
           }
         ],
         "responses": {
@@ -1273,19 +1471,6 @@
             "Enable": true,
             "data": "if (pm.response.code === 200) { var j = pm.response.json(); if (j && j.data && j.data.access_token) { pm.environment.set('access_token', j.data.access_token); pm.globals.set('access_token', j.data.access_token); } }"
           }
-        ],
-        "parameters": [
-          {
-            "name": "Origin",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "https://group5.bccdev.id",
-              "example": "https://group5.bccdev.id"
-            },
-            "description": "Pre-filled allowed Frontend Origin for CSRF protection check"
-          }
         ]
       }
     },
@@ -1294,6 +1479,8 @@
         "tags": [
           "Auth"
         ],
+        "x-apidog-folder": "Auth",
+        "x-apidog-status": "released",
         "summary": "Logout & Revoke Session Family",
         "description": "Revokes the current session family in PostgreSQL and clears the `refresh_token` cookie.",
         "operationId": "logoutUser",
@@ -1303,6 +1490,14 @@
           },
           {
             "RefreshCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/OriginHeader"
           }
         ],
         "responses": {
@@ -1329,20 +1524,7 @@
               }
             }
           }
-        },
-        "parameters": [
-          {
-            "name": "Origin",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "https://group5.bccdev.id",
-              "example": "https://group5.bccdev.id"
-            },
-            "description": "Pre-filled allowed Frontend Origin for CSRF protection check"
-          }
-        ]
+        }
       }
     },
     "/api/v1/me": {
@@ -1350,12 +1532,19 @@
         "tags": [
           "Auth"
         ],
+        "x-apidog-folder": "Auth",
+        "x-apidog-status": "released",
         "summary": "Get Current Signed-In User",
-        "description": "Returns the profile and role of the authenticated user from PostgreSQL.",
+        "description": "Returns the profile and role (`Contributor` or `Admin`) of the authenticated user from PostgreSQL.",
         "operationId": "getMe",
         "security": [
           {
             "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
           }
         ],
         "responses": {
@@ -1392,6 +1581,8 @@
         "tags": [
           "Works (Public)"
         ],
+        "x-apidog-folder": "Works (Public)",
+        "x-apidog-status": "released",
         "summary": "List Published Works (Public Gallery)",
         "description": "Returns cursor-paginated `Published` works ordered by `published_at DESC, id DESC`. Supports combined search (`q`), `category`, and `tech_stack` filters.",
         "operationId": "listPublicWorks",
@@ -1399,6 +1590,7 @@
           {
             "name": "q",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "example": "Smart Campus"
@@ -1408,6 +1600,7 @@
           {
             "name": "category",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "example": "IoT & Hardware"
@@ -1417,6 +1610,7 @@
           {
             "name": "tech_stack",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "example": "Go"
@@ -1426,6 +1620,7 @@
           {
             "name": "cursor",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
             },
@@ -1434,6 +1629,7 @@
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "default": 20,
@@ -1464,6 +1660,16 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid pagination cursor (`invalid_cursor`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       },
@@ -1471,12 +1677,19 @@
         "tags": [
           "Works (Contributor & Owner)"
         ],
-        "summary": "Create a New Work (Starts as Draft)",
-        "description": "Creates a new work with status `Draft` using `multipart/form-data`. `tech_stack` and `team_members` are sent as repeated form fields (`formData.append('tech_stack', item)`).",
+        "x-apidog-folder": "Works (Contributor & Owner)",
+        "x-apidog-status": "released",
+        "summary": "Create a New Work (Starts as Draft & Auto-Fills work_id)",
+        "description": "Creates a new work with status `Draft` using `multipart/form-data`. `tech_stack` and `team_members` are sent as repeated form fields (`tech_stack` or `tech_stack[]`). Automatically saves `data.id` to Apidog's `{{work_id}}` variable.",
         "operationId": "createWork",
         "security": [
           {
             "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
           }
         ],
         "requestBody": {
@@ -1499,6 +1712,7 @@
                   "title": {
                     "type": "string",
                     "minLength": 3,
+                    "maxLength": 150,
                     "example": "Smart Campus IoT Monitor",
                     "default": "Smart Campus IoT Monitor"
                   },
@@ -1511,12 +1725,14 @@
                   "description": {
                     "type": "string",
                     "minLength": 10,
+                    "maxLength": 10000,
                     "default": "Sistem pemantauan berbasis sensor ESP32 yang terintegrasi dengan dashboard web realtime untuk memantau suhu, kelembapan, CO2, dan pemakaian listrik.",
                     "example": "Sistem pemantauan berbasis sensor ESP32 yang terintegrasi dengan dashboard web realtime untuk memantau suhu, kelembapan, CO2, dan pemakaian listrik."
                   },
                   "benefits": {
                     "type": "string",
                     "minLength": 10,
+                    "maxLength": 5000,
                     "default": "Membantu pengelola gedung menghemat energi hingga 20% dan mendeteksi ruangan berventilasi buruk secara otomatis.",
                     "example": "Membantu pengelola gedung menghemat energi hingga 20% dan mendeteksi ruangan berventilasi buruk secara otomatis."
                   },
@@ -1575,7 +1791,7 @@
                   "cover": {
                     "type": "string",
                     "format": "binary",
-                    "description": "JPEG, PNG, or WebP image up to 5 MB"
+                    "description": "Required cover image (JPEG, PNG, or WebP up to 5 MB, max 40M pixels)"
                   }
                 }
               }
@@ -1598,8 +1814,18 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid multipart form-data (`invalid_multipart`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
-            "description": "Unauthenticated",
+            "description": "Unauthenticated (`unauthorized` / `token_expired`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1609,7 +1835,7 @@
             }
           },
           "422": {
-            "description": "Validation failed",
+            "description": "Validation failed (`validation_failed`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1643,6 +1869,8 @@
         "tags": [
           "Works (Public)"
         ],
+        "x-apidog-folder": "Works (Public)",
+        "x-apidog-status": "released",
         "summary": "Get Featured Published Work",
         "description": "Returns the single featured `Published` work, or `null` if none is featured.",
         "operationId": "getFeaturedWork",
@@ -1675,8 +1903,10 @@
         "tags": [
           "Works (Public)"
         ],
+        "x-apidog-folder": "Works (Public)",
+        "x-apidog-status": "released",
         "summary": "List All Published Works for Exhibition Mode (A-Z)",
-        "description": "Returns all `Published` works sorted alphabetically by `title` (A-Z) without pagination for `/exhibition` booth display.",
+        "description": "Returns all `Published` works (up to 300) sorted alphabetically by `lower(title) ASC, id ASC` without pagination for `/exhibition` booth display.",
         "operationId": "listExhibitionWorks",
         "responses": {
           "200": {
@@ -1705,6 +1935,8 @@
         "tags": [
           "Works (Public)"
         ],
+        "x-apidog-folder": "Works (Public)",
+        "x-apidog-status": "released",
         "summary": "Get Filter Facets (Categories & Tech Stack)",
         "description": "Returns distinct categories and tech stack items across all `Published` works.",
         "operationId": "getWorkFacets",
@@ -1761,21 +1993,14 @@
         "tags": [
           "Works (Public)"
         ],
+        "x-apidog-folder": "Works (Public)",
+        "x-apidog-status": "released",
         "summary": "Get Public Work Detail",
-        "description": "Returns full details of a `Published` work. Returns `404` if the work does not exist or is `Draft`/`Unpublished`.",
+        "description": "Returns full details (including `screenshots`) of a `Published` work. Returns `404` if the work does not exist or is `Draft`/`Unpublished`.",
         "operationId": "getPublicWorkDetail",
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            },
-            "description": "Work UUID (auto-filled from `{{work_id}}` after creating a work)"
+            "$ref": "#/components/parameters/WorkIdPath"
           }
         ],
         "responses": {
@@ -1795,7 +2020,7 @@
             }
           },
           "404": {
-            "description": "Not found or not Published",
+            "description": "Not found or not Published (`work_not_found`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -1810,6 +2035,8 @@
         "tags": [
           "Works (Contributor & Owner)"
         ],
+        "x-apidog-folder": "Works (Contributor & Owner)",
+        "x-apidog-status": "released",
         "summary": "Edit Work (Owner or Admin)",
         "description": "Updates work content and optionally replaces `cover`. Does not change publication status or featured mark.",
         "operationId": "updateWork",
@@ -1820,16 +2047,10 @@
         ],
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            },
-            "description": "Work UUID (auto-filled from `{{work_id}}` after creating a work)"
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/WorkIdPath"
           }
         ],
         "requestBody": {
@@ -1851,6 +2072,7 @@
                   "title": {
                     "type": "string",
                     "minLength": 3,
+                    "maxLength": 150,
                     "default": "Smart Campus IoT Monitor v2",
                     "example": "Smart Campus IoT Monitor v2"
                   },
@@ -1863,12 +2085,14 @@
                   "description": {
                     "type": "string",
                     "minLength": 10,
+                    "maxLength": 10000,
                     "default": "Sistem pemantauan berbasis sensor ESP32 yang telah diperbarui dengan notifikasi otomatis dan analitik mingguan.",
                     "example": "Sistem pemantauan berbasis sensor ESP32 yang telah diperbarui dengan notifikasi otomatis dan analitik mingguan."
                   },
                   "benefits": {
                     "type": "string",
                     "minLength": 10,
+                    "maxLength": 5000,
                     "default": "Membantu pengelola gedung menghemat energi hingga 25% dengan deteksi anomali beban listrik.",
                     "example": "Membantu pengelola gedung menghemat energi hingga 25% dengan deteksi anomali beban listrik."
                   },
@@ -1948,6 +2172,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid multipart form-data (`invalid_multipart`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthenticated",
             "content": {
@@ -1994,8 +2228,10 @@
         "tags": [
           "Works (Contributor & Owner)"
         ],
+        "x-apidog-folder": "Works (Contributor & Owner)",
+        "x-apidog-status": "released",
         "summary": "Delete Work (Owner or Admin)",
-        "description": "Soft-deletes the work, removes media from disk in the background, and broadcasts `work.deleted` on `/ws/wall` if the work was `Published`.",
+        "description": "Soft-deletes the work, removes cover & screenshots from disk in the background, and broadcasts `work.deleted` on `/ws/wall` if the work was `Published`.",
         "operationId": "deleteWork",
         "security": [
           {
@@ -2004,16 +2240,10 @@
         ],
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            },
-            "description": "Work UUID (auto-filled from `{{work_id}}` after creating a work)"
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/WorkIdPath"
           }
         ],
         "responses": {
@@ -2053,53 +2283,203 @@
         }
       }
     },
-    "/api/v1/media/works/{id}/cover": {
-      "get": {
+    "/api/v1/works/{id}/screenshots": {
+      "post": {
         "tags": [
-          "Media"
+          "Works (Contributor & Owner)"
         ],
-        "summary": "Stream Published Work Cover Image",
-        "description": "Streams the cover image of a `Published` work from disk. Returns `404` immediately if the work is hidden or deleted.",
-        "operationId": "getPublishedWorkCover",
-        "parameters": [
+        "x-apidog-folder": "Works (Contributor & Owner)",
+        "x-apidog-status": "released",
+        "summary": "Add Extra Screenshot (Owner or Admin & Auto-Fills screenshot_id)",
+        "description": "Uploads one extra image (JPEG, PNG or WebP, max 5 MB, checked by content) as multipart field `image`. A work holds at most 5 screenshots. Automatically saves `data.id` to Apidog's `{{screenshot_id}}` variable.",
+        "operationId": "addWorkScreenshot",
+        "security": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            }
+            "BearerAuth": []
           }
         ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/WorkIdPath"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "image"
+                ],
+                "properties": {
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "JPEG, PNG, or WebP screenshot up to 5 MB"
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
-          "200": {
-            "description": "Cover image stream",
+          "201": {
+            "description": "Screenshot added",
             "content": {
-              "image/webp": {
+              "application/json": {
                 "schema": {
-                  "type": "string",
-                  "format": "binary"
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Screenshot"
+                    }
+                  }
                 }
-              },
-              "image/png": {
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid multipart form-data (`invalid_multipart`)",
+            "content": {
+              "application/json": {
                 "schema": {
-                  "type": "string",
-                  "format": "binary"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
-              },
-              "image/jpeg": {
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
                 "schema": {
-                  "type": "string",
-                  "format": "binary"
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner of a Published work",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
           },
           "404": {
-            "description": "Work not found or not Published",
+            "description": "Work not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Work already has 5 screenshots (`screenshot_limit`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "screenshot_limit",
+                    "message": "Maksimal 5 screenshot per karya"
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Missing, oversized or invalid image (`error.fields.image`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-apidog-post-processors": [
+          {
+            "type": "extractor",
+            "Enable": true,
+            "data": {
+              "variableName": "screenshot_id",
+              "variableType": "environment",
+              "expression": "$.data.id",
+              "source": "body"
+            }
+          },
+          {
+            "type": "customScript",
+            "Enable": true,
+            "data": "if (pm.response.code === 200 || pm.response.code === 201) { var j = pm.response.json(); if (j && j.data && j.data.id) { pm.environment.set('screenshot_id', j.data.id); pm.globals.set('screenshot_id', j.data.id); } }"
+          }
+        ]
+      }
+    },
+    "/api/v1/works/{id}/screenshots/{imageId}": {
+      "delete": {
+        "tags": [
+          "Works (Contributor & Owner)"
+        ],
+        "x-apidog-folder": "Works (Contributor & Owner)",
+        "x-apidog-status": "released",
+        "summary": "Remove Extra Screenshot (Owner or Admin)",
+        "description": "Deletes the screenshot row and removes the stored image file in the background.",
+        "operationId": "deleteWorkScreenshot",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/WorkIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/ScreenshotIdPath"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Screenshot removed"
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner of a Published work",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Work or screenshot not found (`work_not_found` / `screenshot_not_found`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2116,8 +2496,10 @@
         "tags": [
           "Works (Contributor & Owner)"
         ],
+        "x-apidog-folder": "Works (Contributor & Owner)",
+        "x-apidog-status": "released",
         "summary": "List Own Works (Contributor Dashboard)",
-        "description": "Returns works owned by the signed-in user across all statuses (`Draft`, `Published`, `Unpublished`).",
+        "description": "Returns works owned by the signed-in user across all statuses (`Draft`, `Published`, `Unpublished`), ordered by `created_at DESC, id DESC`.",
         "operationId": "listMyWorks",
         "security": [
           {
@@ -2126,16 +2508,22 @@
         ],
         "parameters": [
           {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
             "name": "q",
             "in": "query",
+            "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "Smart Campus"
             },
             "description": "Search by title"
           },
           {
             "name": "status",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "enum": [
@@ -2143,23 +2531,29 @@
                 "Published",
                 "Unpublished"
               ]
-            }
+            },
+            "description": "Filter by status"
           },
           {
             "name": "cursor",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Pagination cursor from `meta.next_cursor`"
           },
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "default": 20,
-              "maximum": 20
-            }
+              "maximum": 20,
+              "example": 20
+            },
+            "description": "Max items per page (capped at 20)"
           }
         ],
         "responses": {
@@ -2184,8 +2578,28 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid pagination cursor (`invalid_cursor`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid status filter (`validation_failed`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2202,8 +2616,10 @@
         "tags": [
           "Works (Contributor & Owner)"
         ],
+        "x-apidog-folder": "Works (Contributor & Owner)",
+        "x-apidog-status": "released",
         "summary": "Get Work for Dashboard Preview / Edit (Owner or Admin)",
-        "description": "Returns a `ManagedWork` of any status (with a 10-minute signed `cover_url` if `Draft`/`Unpublished`) for the owner or an Admin.",
+        "description": "Returns a `ManagedWork` of any status (with 10-minute signed `cover_url` and `screenshots` URLs if `Draft`/`Unpublished`) for the owner or an Admin.",
         "operationId": "getManagedWork",
         "security": [
           {
@@ -2212,15 +2628,10 @@
         ],
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            }
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/WorkIdPath"
           }
         ],
         "responses": {
@@ -2250,7 +2661,7 @@
             }
           },
           "403": {
-            "description": "Forbidden",
+            "description": "Forbidden (caller is neither owner nor Admin on a Published work)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2260,7 +2671,7 @@
             }
           },
           "404": {
-            "description": "Not found",
+            "description": "Not found (or non-owner accessing Draft/Unpublished)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2277,12 +2688,19 @@
         "tags": [
           "Works (Contributor & Owner)"
         ],
+        "x-apidog-folder": "Works (Contributor & Owner)",
+        "x-apidog-status": "released",
         "summary": "Get Contributor Dashboard Summary",
-        "description": "Returns counts of the signed-in user's own works by status and featured mark.",
+        "description": "Returns counts of the signed-in user's own works by status (`total_draft`, `total_published`, `total_unpublished`) and featured mark (`total_featured`).",
         "operationId": "getMySummary",
         "security": [
           {
             "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
           }
         ],
         "responses": {
@@ -2319,6 +2737,8 @@
         "tags": [
           "Admin"
         ],
+        "x-apidog-folder": "Admin",
+        "x-apidog-status": "released",
         "summary": "List All Works (Admin Dashboard)",
         "description": "Returns all works in the system with `owner_name`. Supports searching by title or owner name (`q`) and filtering by `status`.",
         "operationId": "adminListWorks",
@@ -2329,16 +2749,22 @@
         ],
         "parameters": [
           {
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
             "name": "q",
             "in": "query",
+            "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "Smart Campus"
             },
             "description": "Search by work title or owner name"
           },
           {
             "name": "status",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string",
               "enum": [
@@ -2346,23 +2772,29 @@
                 "Published",
                 "Unpublished"
               ]
-            }
+            },
+            "description": "Filter by status"
           },
           {
             "name": "cursor",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Pagination cursor from `meta.next_cursor`"
           },
           {
             "name": "limit",
             "in": "query",
+            "required": false,
             "schema": {
               "type": "integer",
               "default": 20,
-              "maximum": 20
-            }
+              "maximum": 20,
+              "example": 20
+            },
+            "description": "Max items per page (capped at 20)"
           }
         ],
         "responses": {
@@ -2387,6 +2819,16 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid pagination cursor (`invalid_cursor`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Unauthenticated",
             "content": {
@@ -2406,6 +2848,16 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Invalid status filter (`validation_failed`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2415,12 +2867,19 @@
         "tags": [
           "Admin"
         ],
+        "x-apidog-folder": "Admin",
+        "x-apidog-status": "released",
         "summary": "Get Global Dashboard Summary (Admin)",
         "description": "Returns total counts of `Draft`, `Published`, `Unpublished`, and `Featured` works across the entire system.",
         "operationId": "adminGetSummary",
         "security": [
           {
             "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AuthorizationHeader"
           }
         ],
         "responses": {
@@ -2467,6 +2926,8 @@
         "tags": [
           "Admin"
         ],
+        "x-apidog-folder": "Admin",
+        "x-apidog-status": "released",
         "summary": "Publish a Draft or Unpublished Work (Admin)",
         "description": "Transitions a `Draft` or `Unpublished` work to `Published`, sets `published_at`, invalidates Redis gallery cache, and broadcasts `work.published` over `/ws/wall`.",
         "operationId": "adminPublishWork",
@@ -2477,16 +2938,10 @@
         ],
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            },
-            "description": "Work UUID (auto-filled from `{{work_id}}`)"
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/WorkIdPath"
           }
         ],
         "responses": {
@@ -2516,7 +2971,7 @@
             }
           },
           "403": {
-            "description": "Requires Admin role",
+            "description": "Requires Admin role (`forbidden`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2526,7 +2981,7 @@
             }
           },
           "404": {
-            "description": "Work not found",
+            "description": "Work not found (`work_not_found`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2536,11 +2991,17 @@
             }
           },
           "409": {
-            "description": "Work is already Published",
+            "description": "Work is already Published (`already_published`)",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "already_published",
+                    "message": "Karya sudah berstatus Published"
+                  }
                 }
               }
             }
@@ -2553,6 +3014,8 @@
         "tags": [
           "Admin"
         ],
+        "x-apidog-folder": "Admin",
+        "x-apidog-status": "released",
         "summary": "Unpublish a Published Work (Admin)",
         "description": "Transitions a `Published` work to `Unpublished`, clears `is_featured`, invalidates Redis cache, and broadcasts `work.unpublished` over `/ws/wall`.",
         "operationId": "adminUnpublishWork",
@@ -2563,16 +3026,10 @@
         ],
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            },
-            "description": "Work UUID (auto-filled from `{{work_id}}`)"
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/WorkIdPath"
           }
         ],
         "responses": {
@@ -2602,7 +3059,7 @@
             }
           },
           "403": {
-            "description": "Requires Admin role",
+            "description": "Requires Admin role (`forbidden`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2612,7 +3069,7 @@
             }
           },
           "404": {
-            "description": "Work not found",
+            "description": "Work not found (`work_not_found`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2622,11 +3079,17 @@
             }
           },
           "409": {
-            "description": "Work is not currently Published",
+            "description": "Work is not currently Published (`not_published`)",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "not_published",
+                    "message": "Hanya karya berstatus Published yang dapat di-unpublish"
+                  }
                 }
               }
             }
@@ -2639,8 +3102,10 @@
         "tags": [
           "Admin"
         ],
+        "x-apidog-folder": "Admin",
+        "x-apidog-status": "released",
         "summary": "Set or Clear Featured Work (Admin)",
-        "description": "Sets or clears `is_featured` on a `Published` work. Featuring a new work automatically clears the previous featured work in the same transaction.",
+        "description": "Sets or clears `is_featured` on a `Published` work. Featuring a new work automatically clears the previous featured work in the same transaction under a PostgreSQL advisory lock.",
         "operationId": "adminFeatureWork",
         "security": [
           {
@@ -2649,16 +3114,10 @@
         ],
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            },
-            "description": "Work UUID (auto-filled from `{{work_id}}`)"
+            "$ref": "#/components/parameters/AuthorizationHeader"
+          },
+          {
+            "$ref": "#/components/parameters/WorkIdPath"
           }
         ],
         "requestBody": {
@@ -2683,13 +3142,13 @@
               },
               "examples": {
                 "set_featured": {
-                  "summary": "Mark Work as Featured",
+                  "summary": "1. Mark Work as Featured",
                   "value": {
                     "is_featured": true
                   }
                 },
                 "unfeature": {
-                  "summary": "Remove Featured Mark",
+                  "summary": "2. Remove Featured Mark",
                   "value": {
                     "is_featured": false
                   }
@@ -2714,107 +3173,12 @@
               }
             }
           },
-          "401": {
-            "description": "Unauthenticated",
+          "400": {
+            "description": "Malformed JSON body (`invalid_json`)",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Requires Admin role",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Work not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Work is not Published (only Published works can be featured)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/works/{id}/screenshots": {
-      "post": {
-        "tags": [
-          "Works (Contributor & Owner)"
-        ],
-        "summary": "Add Extra Screenshot (Owner or Admin)",
-        "description": "Should Have. Uploads one extra image (JPEG, PNG or WebP, max 5 MB, checked by content) as multipart field `image`. A work holds at most 5 screenshots. Not realtime: other viewers see it after a refresh.",
-        "operationId": "addWorkScreenshot",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            },
-            "description": "Work UUID"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "image"
-                ],
-                "properties": {
-                  "image": {
-                    "type": "string",
-                    "format": "binary"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Screenshot added",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "$ref": "#/components/schemas/Screenshot"
-                    }
-                  }
                 }
               }
             }
@@ -2830,7 +3194,7 @@
             }
           },
           "403": {
-            "description": "Not the owner of a Published work",
+            "description": "Requires Admin role (`forbidden`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2840,7 +3204,7 @@
             }
           },
           "404": {
-            "description": "Work not found, or not visible to the caller",
+            "description": "Work not found (`work_not_found`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2850,17 +3214,23 @@
             }
           },
           "409": {
-            "description": "Work already has 5 screenshots (`screenshot_limit`)",
+            "description": "Work is not Published (`feature_requires_published`)",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": {
+                    "code": "feature_requires_published",
+                    "message": "Hanya karya berstatus Published yang dapat dijadikan unggulan"
+                  }
                 }
               }
             }
           },
           "422": {
-            "description": "Missing, oversized or invalid image (`error.fields.image`)",
+            "description": "Missing `is_featured` (`validation_failed`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2872,135 +3242,67 @@
         }
       }
     },
-    "/api/v1/works/{id}/screenshots/{imageId}": {
-      "delete": {
-        "tags": [
-          "Works (Contributor & Owner)"
-        ],
-        "summary": "Remove Extra Screenshot (Owner or Admin)",
-        "description": "Should Have. Deletes the row and, in the background, the stored image.",
-        "operationId": "deleteWorkScreenshot",
-        "security": [
-          {
-            "BearerAuth": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            },
-            "description": "Work UUID"
-          },
-          {
-            "name": "imageId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "example": "9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
-            },
-            "description": "Screenshot UUID (from the `screenshots` list of the work)"
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Screenshot removed"
-          },
-          "401": {
-            "description": "Unauthenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Not the owner of a Published work",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Work or screenshot not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/media/works/{id}/screenshots/{imageId}": {
+    "/api/v1/media/works/{id}/cover": {
       "get": {
         "tags": [
           "Media"
         ],
-        "summary": "Stream Screenshot",
-        "description": "Public for a `Published` work (stable URL, `404` once hidden or deleted). For any other status the URL must carry the `exp` and `sig` query values issued to the owner or an Admin; otherwise `404`.",
-        "operationId": "getWorkScreenshot",
+        "x-apidog-folder": "Media",
+        "x-apidog-status": "released",
+        "summary": "Stream Work Cover Image (Public or Signed)",
+        "description": "Streams the cover image of a work from disk. Public for a `Published` work (supports `ETag` / `If-None-Match` `304 Not Modified`, returns `404` immediately once hidden or deleted). For `Draft` or `Unpublished` works, requires valid `exp` and `sig` query parameters issued to the owner or an Admin.",
+        "operationId": "getPublishedWorkCover",
         "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "default": "{{work_id}}",
-              "example": "550e8400-e29b-41d4-a716-446655440000"
-            },
-            "description": "Work UUID"
-          },
-          {
-            "name": "imageId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "example": "9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
-            },
-            "description": "Screenshot UUID (from the `screenshots` list of the work)"
+            "$ref": "#/components/parameters/WorkIdPath"
           },
           {
             "name": "exp",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer"
+              "type": "integer",
+              "example": 1794733800
             },
-            "description": "Signature expiry (Unix seconds), non-published works only"
+            "description": "HMAC signature expiry timestamp (Unix seconds); required only for Draft/Unpublished works."
           },
           {
             "name": "sig",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "a8f5f167f44f4964e6c998dee827110c"
             },
-            "description": "Signature, non-published works only"
+            "description": "HMAC-SHA256 signature; required only for Draft/Unpublished works."
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "\"3b4c5d6e7f8a9b0c\""
+            },
+            "description": "Optional ETag for conditional requests on Published works."
           }
         ],
         "responses": {
           "200": {
-            "description": "Image stream",
+            "description": "Cover image stream",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "example": "no-cache"
+                }
+              }
+            },
             "content": {
               "image/webp": {
                 "schema": {
@@ -3022,8 +3324,283 @@
               }
             }
           },
+          "304": {
+            "description": "Not Modified (ETag matched for Published work)"
+          },
           "404": {
-            "description": "Not found, not public, or bad or expired signature",
+            "description": "Work not found, not Published, or missing/expired signature (`media_not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/media/works/{id}/screenshots/{imageId}": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "x-apidog-folder": "Media",
+        "x-apidog-status": "released",
+        "summary": "Stream Work Screenshot Image (Public or Signed)",
+        "description": "Public for a `Published` work (stable URL, `404` once hidden or deleted). For `Draft` or `Unpublished` works, the URL must carry the `exp` and `sig` query values issued to the owner or an Admin; otherwise `404`.",
+        "operationId": "getWorkScreenshot",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/WorkIdPath"
+          },
+          {
+            "$ref": "#/components/parameters/ScreenshotIdPath"
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "example": 1794733800
+            },
+            "description": "Signature expiry (Unix seconds), non-published works only"
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "f12e3d4c5b6a79880123456789abcdef"
+            },
+            "description": "HMAC-SHA256 signature, non-published works only"
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "example": "\"3b4c5d6e7f8a9b0c\""
+            },
+            "description": "Optional ETag for conditional requests on Published works."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Screenshot image stream",
+            "content": {
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not Modified (ETag matched for Published work)"
+          },
+          "404": {
+            "description": "Not found, not public, or bad/expired signature (`media_not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ws/wall": {
+      "get": {
+        "tags": [
+          "Realtime (WebSocket)"
+        ],
+        "x-apidog-folder": "Realtime (WebSocket)",
+        "x-apidog-status": "released",
+        "summary": "WebSocket Live Showcase Wall Stream (Root Path)",
+        "description": "Upgrades the HTTP connection to a public, read-only RFC 6455 WebSocket stream (`wss://<host>/ws/wall`). Broadcasts JSON envelopes `{ \"type\", \"seq\", \"payload\" }` whenever a work is published (`work.published`), unpublished (`work.unpublished`), or deleted (`work.deleted`). Rate-limited to 20 handshakes/min per IP, max 10 concurrent connections per IP, and 500 total connections.",
+        "operationId": "connectWallWebSocketRoot",
+        "parameters": [
+          {
+            "name": "Connection",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "Upgrade",
+              "example": "Upgrade"
+            }
+          },
+          {
+            "name": "Upgrade",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "websocket",
+              "example": "websocket"
+            }
+          },
+          {
+            "name": "Sec-WebSocket-Version",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "13",
+              "example": "13"
+            }
+          },
+          {
+            "name": "Sec-WebSocket-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "dGhlIHNhbXBsZSBub25jZQ==",
+              "example": "dGhlIHNhbXBsZSBub25jZQ=="
+            }
+          },
+          {
+            "$ref": "#/components/parameters/OriginHeader"
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols (WebSocket connection established)"
+          },
+          "400": {
+            "description": "Missing or invalid WebSocket upgrade headers (`websocket_upgrade_required` / `websocket_key_missing`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Origin not allowed (`forbidden_origin`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Connection or handshake limit reached (`rate_limited`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ws/wall": {
+      "get": {
+        "tags": [
+          "Realtime (WebSocket)"
+        ],
+        "x-apidog-folder": "Realtime (WebSocket)",
+        "x-apidog-status": "released",
+        "summary": "WebSocket Live Showcase Wall Stream (/api/v1 Alias)",
+        "description": "Alias of `GET /ws/wall` mounted under `/api/v1/ws/wall` so reverse proxies forwarding `/api/v1/*` can upgrade WebSocket connections seamlessly.",
+        "operationId": "connectWallWebSocketV1",
+        "parameters": [
+          {
+            "name": "Connection",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "Upgrade",
+              "example": "Upgrade"
+            }
+          },
+          {
+            "name": "Upgrade",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "websocket",
+              "example": "websocket"
+            }
+          },
+          {
+            "name": "Sec-WebSocket-Version",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "13",
+              "example": "13"
+            }
+          },
+          {
+            "name": "Sec-WebSocket-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "default": "dGhlIHNhbXBsZSBub25jZQ==",
+              "example": "dGhlIHNhbXBsZSBub25jZQ=="
+            }
+          },
+          {
+            "$ref": "#/components/parameters/OriginHeader"
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols (WebSocket connection established)"
+          },
+          "400": {
+            "description": "Missing or invalid WebSocket upgrade headers (`websocket_upgrade_required` / `websocket_key_missing`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Origin not allowed (`forbidden_origin`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Connection or handshake limit reached (`rate_limited`)",
             "content": {
               "application/json": {
                 "schema": {
