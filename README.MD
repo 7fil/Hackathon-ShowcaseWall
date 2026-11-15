@@ -87,3 +87,5 @@ Required GitHub Repository Secrets:
 - After a committed admin change the order is: commit, bump `works:version`, delete `work:{id}`, publish the event. Shared Redis keys live in `pkg/cache/keys.go`.
 - Status changes are conditional updates (`409` for the loser of a race). Featuring runs under a Postgres advisory lock and clears the previous mark in the same transaction.
 - Tests: `go test -race ./...` (admin and media service rules, local storage, `pkg/pgarray`).
+
+1
