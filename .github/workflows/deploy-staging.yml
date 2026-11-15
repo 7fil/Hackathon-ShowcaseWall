@@ -62,7 +62,6 @@ jobs:
               echo "::error::GRAFANA_ADMIN_PASSWORD is not set: add it as a GitHub secret (or put it in /opt/bcc-showcase/.env)"
               exit 1
             fi
-            GRAFANA_PORT=$(grep '^GRAFANA_PORT=' .env | cut -d= -f2- || true); GRAFANA_PORT=${GRAFANA_PORT:-3000}
             GRAFANA_USER=$(grep '^GRAFANA_ADMIN_USER=' .env | cut -d= -f2- || true); GRAFANA_USER=${GRAFANA_USER:-admin}
             GRAFANA_PASS=$(grep '^GRAFANA_ADMIN_PASSWORD=' .env | cut -d= -f2-)
 
@@ -104,26 +103,25 @@ jobs:
             fi
 
             echo "Checking Grafana datasource and dashboard..."
+            # Checked from inside the container (localhost:3000), so published ports and any
+            # proxy on the VM cannot interfere.
+            B64=$(printf '%s:%s' "$GRAFANA_USER" "$GRAFANA_PASS" | base64 | tr -d '\n')
+            gget() { docker compose exec -T grafana wget -qO- --header "Authorization: Basic $B64" "http://localhost:3000$1"; }
             ok=""
             for i in $(seq 1 20); do
-              if curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASS" "http://127.0.0.1:$GRAFANA_PORT/grafana/api/dashboards/uid/showcase-wall" >/dev/null 2>&1 \
-                 && curl -fsS -u "$GRAFANA_USER:$GRAFANA_PASS" "http://127.0.0.1:$GRAFANA_PORT/grafana/api/datasources/uid/prometheus/health" | grep -q '"OK"'; then ok=1; break; fi
+              if gget /api/dashboards/uid/showcase-wall 2>/dev/null | grep -q '"uid":"showcase-wall"' \
+                 && gget /api/datasources/uid/prometheus/health 2>/dev/null | grep -q '"OK"'; then ok=1; break; fi
               sleep 3
             done
             if [ -z "$ok" ]; then
               echo "::error::Grafana dashboard or Prometheus datasource is not healthy"
+              echo "--- grafana server env"; docker compose exec -T grafana env | grep -E '^GF_(SERVER|PATHS)' || true
+              echo "--- compose files on the VM"; ls -la /opt/bcc-showcase | grep -i -E 'compose|\.env' || true
+              echo "--- provisioned dashboard files"; docker compose exec -T grafana ls -la /var/lib/grafana/dashboards || true
+              echo "--- grafana health"; gget /api/health || true
+              echo "--- dashboard request"; docker compose exec -T grafana wget -S -O- --header "Authorization: Basic $B64" http://localhost:3000/api/dashboards/uid/showcase-wall 2>&1 | head -20 || true
+              echo "--- datasource health"; gget /api/datasources/uid/prometheus/health || true
               docker compose logs --tail=40 grafana
               exit 1
             fi
-            echo "Checking Grafana through the API port (what the public domain uses)..."
-            ok=""
-            for i in $(seq 1 10); do
-              if curl -fsS http://127.0.0.1:8080/grafana/api/health | grep -q '"database"'; then ok=1; break; fi
-              sleep 3
-            done
-            if [ -z "$ok" ]; then
-              echo "::error::Grafana is not reachable at :8080/grafana/ (proxy from the API)"
-              docker compose logs --tail=40 api grafana
-              exit 1
-            fi
-            echo "Monitoring OK: https://group4-be.bccdev.id/grafana/"
+            echo "Monitoring OK (Grafana and Prometheus are tunnel-only, see README)"

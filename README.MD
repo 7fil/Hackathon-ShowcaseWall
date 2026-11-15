@@ -93,10 +93,11 @@ Required GitHub Repository Secrets:
 
 `docker compose up -d` starts Prometheus (7 days of data, 512 MB) and Grafana (256 MB) next to the API.
 Prometheus scrapes the API's internal metrics port `api:9100` over the Docker network; that port is never published.
-Both UIs listen on the VM's loopback only, so they are not reachable from the internet:
+Both UIs listen on the VM's loopback only (`127.0.0.1`), so they are not reachable from the internet and the API does not proxy them.
+Reach them with an SSH tunnel from your computer:
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 <user>@<vm>
+ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 -p <VM_PORT> <VM_USER>@<VM_HOST>
 # Grafana    http://localhost:3000   (GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD)
 # Prometheus http://localhost:9090   (Alerts tab shows monitoring/prometheus/alerts.yml)
 ```
