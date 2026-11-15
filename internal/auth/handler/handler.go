@@ -126,11 +126,13 @@ func (h *Handler) login(c *gin.Context) {
 		badJSON(c)
 		return
 	}
-	if err := h.svc.Login(c.Request.Context(), service.LoginInput{Email: req.Email, Password: req.Password}, c.ClientIP()); err != nil {
+	res, err := h.svc.Login(c.Request.Context(), service.LoginInput{Email: req.Email, Password: req.Password}, c.ClientIP())
+	if err != nil {
 		response.Fail(c, err)
 		return
 	}
-	response.OK(c, http.StatusAccepted, codeSent)
+	h.setRefreshCookie(c, res.RefreshToken, res.RefreshExpiresAt)
+	response.OK(c, http.StatusOK, gin.H{"access_token": res.AccessToken, "user": toUserDTO(res.User)})
 }
 
 func (h *Handler) verify(c *gin.Context) {

@@ -130,8 +130,8 @@ func emailTaken() *apperr.Error {
 
 // ----------------------------------------------------------------------- login
 
-// Login checks the password, then emails a code. No tokens are issued here.
-func (s *Service) Login(ctx context.Context, in LoginInput, ip string) error {
+// Login checks the password of a verified account and immediately returns a fresh session.
+func (s *Service) Login(ctx context.Context, in LoginInput, ip string) (*AuthResult, error) {
 	email := normalizeEmail(in.Email)
 
 	fields := map[string]string{}
@@ -142,23 +142,22 @@ func (s *Service) Login(ctx context.Context, in LoginInput, ip string) error {
 		fields["password"] = "Password wajib diisi"
 	}
 	if len(fields) > 0 {
-		return apperr.Validation(fields)
+		return nil, apperr.Validation(fields)
 	}
 
 	failKey := "login_fail:" + email
 	if n, ttl, err := s.d.Limiter.Count(ctx, failKey); err != nil {
-		return apperr.Internal(err)
+		return nil, apperr.Internal(err)
 	} else if n >= FailedLoginLimit {
 		s.d.Logger.Warn("audit: rate limit hit", "scope", "login_fail", "email", logger.MaskEmail(email), "ip", ip)
-		return rateLimited(ttl)
+		return nil, rateLimited(ttl)
 	}
 
 	user, err := s.d.Users.FindByEmail(ctx, email)
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		return apperr.Internal(err)
+		return nil, apperr.Internal(err)
 	}
-	// Same bcrypt work for unknown and known emails, same 401 for both.
-	// OAuth-only users (no password) take the same path and get the same 401.
+
 	hash := s.dummyHash
 	if user != nil && user.PasswordHash != "" {
 		hash = user.PasswordHash
@@ -170,16 +169,21 @@ func (s *Service) Login(ctx context.Context, in LoginInput, ip string) error {
 		}
 		metrics.IncLoginAttempt("failed")
 		s.d.Logger.Warn("audit: login failed", "step", "password", "email", logger.MaskEmail(email), "ip", ip)
-		return errInvalidCredentials
+		return nil, errInvalidCredentials
+	}
+	if user.EmailVerifiedAt == nil {
+		return nil, apperr.New(apperr.KindForbidden, "email_not_verified", "Email belum diverifikasi, silakan selesaikan registrasi")
 	}
 	_ = s.d.Limiter.Reset(ctx, failKey)
 
-	if err := s.checkCodeQuota(ctx, email); err != nil {
-		return err
+	res, err := s.startSession(ctx, user)
+	if err != nil {
+		return nil, err
 	}
-	return s.sendCode(ctx, PurposeLogin, email)
+	metrics.IncLoginAttempt("success")
+	s.d.Logger.Info("audit: login success", "purpose", "login", "user_id", user.ID, "ip", ip)
+	return res, nil
 }
-
 // ------------------------------------------------------------------ OTP verify
 
 // VerifyOTP confirms a code. For register it creates the Contributor account; for
