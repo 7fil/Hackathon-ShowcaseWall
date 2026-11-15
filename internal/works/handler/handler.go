@@ -41,6 +41,8 @@ func (h *Handler) Routes(v1 *gin.RouterGroup, requireAuth gin.HandlerFunc) {
 	w.POST("", requireAuth, multipartLimit, h.createWork)
 	w.PATCH("/:id", requireAuth, multipartLimit, h.updateWork)
 	w.DELETE("/:id", requireAuth, h.deleteWork)
+	w.POST("/:id/screenshots", requireAuth, multipartLimit, h.addScreenshot)
+	w.DELETE("/:id/screenshots/:imageId", requireAuth, h.deleteScreenshot)
 
 	me := v1.Group("/me", requireAuth)
 	me.GET("/works", h.listMyWorks)
@@ -262,4 +264,56 @@ func extractRepeatedField(c *gin.Context, key string) []string {
 		vals = c.PostFormArray(key + "[]")
 	}
 	return vals
+}
+
+func (h *Handler) addScreenshot(c *gin.Context) {
+	caller, _ := middleware.IdentityFrom(c)
+	up, err := parseImageUpload(c, "image")
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	dto, err := h.svc.AddScreenshot(c.Request.Context(), caller, c.Param("id"), up)
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.OK(c, http.StatusCreated, dto)
+}
+
+func (h *Handler) deleteScreenshot(c *gin.Context) {
+	caller, _ := middleware.IdentityFrom(c)
+	if err := h.svc.DeleteScreenshot(c.Request.Context(), caller, c.Param("id"), c.Param("imageId")); err != nil {
+		response.Fail(c, err)
+		return
+	}
+	response.NoContent(c)
+}
+
+// parseImageUpload reads one image from a multipart form. A missing file gives a nil
+// upload, which the service reports as a field error.
+func parseImageUpload(c *gin.Context, field string) (*service.CoverUpload, error) {
+	if err := c.Request.ParseMultipartForm(maxMultipartBytes); err != nil {
+		if strings.Contains(err.Error(), "http: request body too large") {
+			return nil, apperr.Validation(map[string]string{field: "Ukuran file gambar maksimal 5MB"})
+		}
+		return nil, apperr.New(apperr.KindInvalid, "invalid_multipart", "Format form-data tidak valid")
+	}
+	fh, err := c.FormFile(field)
+	if err != nil {
+		return nil, nil
+	}
+	if fh.Size > service.MaxCoverBytes {
+		return &service.CoverUpload{Data: make([]byte, service.MaxCoverBytes+1)}, nil
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return nil, apperr.Internal(fmt.Errorf("open image upload: %w", err))
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, service.MaxCoverBytes+1))
+	if err != nil {
+		return nil, apperr.Internal(fmt.Errorf("read image upload: %w", err))
+	}
+	return &service.CoverUpload{Data: data, ContentType: fh.Header.Get("Content-Type")}, nil
 }

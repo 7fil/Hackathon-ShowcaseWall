@@ -234,7 +234,8 @@
               "description",
               "benefits",
               "demo_url",
-              "repo_url"
+              "repo_url",
+              "screenshots"
             ],
             "properties": {
               "description": {
@@ -254,6 +255,13 @@
                 "type": "string",
                 "nullable": true,
                 "example": "https://github.com/bcc/iot-monitor"
+              },
+              "screenshots": {
+                "type": "array",
+                "description": "Extra screenshots (0 to 5), in upload order.",
+                "items": {
+                  "$ref": "#/components/schemas/Screenshot"
+                }
               }
             }
           }
@@ -372,6 +380,13 @@
             "type": "string",
             "format": "date-time",
             "example": "2026-11-15T08:30:00Z"
+          },
+          "screenshots": {
+            "type": "array",
+            "description": "Extra screenshots (0 to 5), in upload order.",
+            "items": {
+              "$ref": "#/components/schemas/Screenshot"
+            }
           }
         }
       },
@@ -409,6 +424,25 @@
             "type": "string",
             "nullable": true,
             "example": "eyJwdWJsaXNoZWRfYXQiOiIyMDI2LTExLTE1VDA5OjAwOjAwWiIsImlkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIn0="
+          }
+        }
+      },
+      "Screenshot": {
+        "type": "object",
+        "required": [
+          "id",
+          "url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "example": "9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
+          },
+          "url": {
+            "type": "string",
+            "description": "Stable URL for a `Published` work; a backend-signed URL (valid about 10 minutes) for any other status.",
+            "example": "/api/v1/media/works/550e8400-e29b-41d4-a716-446655440000/screenshots/9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
           }
         }
       }
@@ -2712,6 +2746,284 @@
           },
           "409": {
             "description": "Work is not Published (only Published works can be featured)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/works/{id}/screenshots": {
+      "post": {
+        "tags": [
+          "Works (Contributor & Owner)"
+        ],
+        "summary": "Add Extra Screenshot (Owner or Admin)",
+        "description": "Should Have. Uploads one extra image (JPEG, PNG or WebP, max 5 MB, checked by content) as multipart field `image`. A work holds at most 5 screenshots. Not realtime: other viewers see it after a refresh.",
+        "operationId": "addWorkScreenshot",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            },
+            "description": "Work UUID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "image"
+                ],
+                "properties": {
+                  "image": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Screenshot added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Screenshot"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner of a Published work",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Work not found, or not visible to the caller",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Work already has 5 screenshots (`screenshot_limit`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Missing, oversized or invalid image (`error.fields.image`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/works/{id}/screenshots/{imageId}": {
+      "delete": {
+        "tags": [
+          "Works (Contributor & Owner)"
+        ],
+        "summary": "Remove Extra Screenshot (Owner or Admin)",
+        "description": "Should Have. Deletes the row and, in the background, the stored image.",
+        "operationId": "deleteWorkScreenshot",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            },
+            "description": "Work UUID"
+          },
+          {
+            "name": "imageId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "example": "9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
+            },
+            "description": "Screenshot UUID (from the `screenshots` list of the work)"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Screenshot removed"
+          },
+          "401": {
+            "description": "Unauthenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the owner of a Published work",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Work or screenshot not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/media/works/{id}/screenshots/{imageId}": {
+      "get": {
+        "tags": [
+          "Media"
+        ],
+        "summary": "Stream Screenshot",
+        "description": "Public for a `Published` work (stable URL, `404` once hidden or deleted). For any other status the URL must carry the `exp` and `sig` query values issued to the owner or an Admin; otherwise `404`.",
+        "operationId": "getWorkScreenshot",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            },
+            "description": "Work UUID"
+          },
+          {
+            "name": "imageId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "example": "9c1d0f3e-5b7a-4c2e-8d41-2a6f0b9e7c11"
+            },
+            "description": "Screenshot UUID (from the `screenshots` list of the work)"
+          },
+          {
+            "name": "exp",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Signature expiry (Unix seconds), non-published works only"
+          },
+          {
+            "name": "sig",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Signature, non-published works only"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image stream",
+            "content": {
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found, not public, or bad or expired signature",
             "content": {
               "application/json": {
                 "schema": {

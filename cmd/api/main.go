@@ -138,6 +138,7 @@ func run() error {
 
 	// Media decides who may see a cover, but asks the works service about the work.
 	mediaService.SetWorkLookup(worksCoverLookup{works: worksService})
+	mediaService.SetScreenshotLookup(worksScreenshotLookup{works: worksService})
 
 	// ---- admin ---------------------------------------------------------------
 	adminRedis := adminrepo.NewRedisCache(rdb)

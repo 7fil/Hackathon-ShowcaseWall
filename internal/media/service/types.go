@@ -49,6 +49,14 @@ type WorkLookup interface {
 	LookupCover(ctx context.Context, workID string) (*WorkCover, error)
 }
 
+// ScreenshotLookup is implemented by the works module's service. It is bound
+// separately from WorkLookup so the cover rules stay untouched.
+type ScreenshotLookup interface {
+	// LookupScreenshot must return ErrWorkNotFound for a missing or deleted work or
+	// screenshot. The returned WorkCover holds the screenshot's key and type.
+	LookupScreenshot(ctx context.Context, workID, imageID string) (*WorkCover, error)
+}
+
 // Stream is an image ready to be written to the client.
 type Stream struct {
 	Body        io.ReadCloser

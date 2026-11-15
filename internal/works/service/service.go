@@ -185,6 +185,7 @@ func (s *Service) GetPublishedDetail(ctx context.Context, id string) (*PublicWor
 	}
 
 	detail := s.toPublicWorkDetail(w)
+	detail.Screenshots = s.loadScreenshots(ctx, w, true)
 	_ = s.d.Cache.SetJSON(ctx, cacheKey, detail, DetailCacheTTL)
 	return &detail, nil
 }
@@ -214,6 +215,7 @@ func (s *Service) GetManagedDetail(ctx context.Context, caller identity.Identity
 		return nil, err
 	}
 	mw := s.toManagedWork(w)
+	mw.Screenshots = s.loadScreenshots(ctx, w, w.Status == StatusPublished)
 	return &mw, nil
 }
 
@@ -357,6 +359,7 @@ func (s *Service) UpdateWork(ctx context.Context, caller identity.Identity, id s
 	s.d.Logger.Info("audit: work edited", "work_id", w.ID, "user_id", caller.UserID)
 
 	mw := s.toManagedWork(w)
+	mw.Screenshots = s.loadScreenshots(ctx, w, w.Status == StatusPublished)
 	return &mw, nil
 }
 
@@ -373,6 +376,10 @@ func (s *Service) DeleteWork(ctx context.Context, caller identity.Identity, id s
 	}
 
 	wasPublished := w.Status == StatusPublished
+	shots, shotsErr := s.d.Works.ListScreenshots(ctx, w.ID)
+	if shotsErr != nil {
+		s.d.Logger.Warn("list screenshots before delete", "work_id", w.ID, "error", shotsErr.Error())
+	}
 	if err := s.d.Works.SoftDelete(ctx, w.ID, s.d.Now()); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return errWorkNotFound
@@ -383,6 +390,9 @@ func (s *Service) DeleteWork(ctx context.Context, caller identity.Identity, id s
 	s.invalidateCache(ctx, w.ID)
 	if w.CoverKey != "" {
 		s.deleteObjectAsync(w.CoverKey)
+	}
+	for _, sh := range shots {
+		s.deleteObjectAsync(sh.ObjectKey)
 	}
 	if wasPublished && s.d.Events != nil {
 		if err := s.d.Events.PublishWorkEvent(ctx, EventWorkDeleted, WsIDPayload{ID: w.ID}); err != nil {
@@ -468,6 +478,7 @@ func (s *Service) toPublicWorkDetail(w *Work) PublicWorkDetail {
 		Benefits:    w.Benefits,
 		DemoURL:     w.DemoURL,
 		RepoURL:     w.RepoURL,
+		Screenshots: []ScreenshotDTO{},
 	}
 }
 
@@ -496,6 +507,7 @@ func (s *Service) toManagedWork(w *Work) ManagedWork {
 		PublishedAt: pubAt,
 		CreatedAt:   w.CreatedAt.UTC(),
 		UpdatedAt:   w.UpdatedAt.UTC(),
+		Screenshots: []ScreenshotDTO{},
 	}
 }
 
@@ -566,6 +578,138 @@ func (s *Service) CoverInfo(ctx context.Context, id string) (*CoverInfo, error) 
 		CoverKey:    w.CoverKey,
 		ContentType: w.CoverContentType,
 		SizeBytes:   w.CoverSizeBytes,
+		Published:   w.Status == StatusPublished,
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Screenshots (Should Have). Not realtime: like any edit, they show after a refresh.
+
+var (
+	errScreenshotNotFound = apperr.New(apperr.KindNotFound, "screenshot_not_found", "Screenshot tidak ditemukan")
+	errScreenshotLimit    = apperr.New(apperr.KindConflict, "screenshot_limit", "Maksimal 5 screenshot per karya")
+)
+
+// loadScreenshots builds the DTOs for a work. A read failure is logged and gives an
+// empty list, so a broken screenshot table never hides the work itself.
+func (s *Service) loadScreenshots(ctx context.Context, w *Work, published bool) []ScreenshotDTO {
+	rows, err := s.d.Works.ListScreenshots(ctx, w.ID)
+	if err != nil {
+		s.d.Logger.Error("list screenshots", "work_id", w.ID, "error", err.Error())
+		return []ScreenshotDTO{}
+	}
+	out := make([]ScreenshotDTO, 0, len(rows))
+	for _, sh := range rows {
+		out = append(out, ScreenshotDTO{ID: sh.ID, URL: s.d.Media.ScreenshotURL(w.ID, sh.ID, sh.ObjectKey, published)})
+	}
+	return out
+}
+
+// AddScreenshot lets the owner or an Admin add one extra image (up to MaxScreenshots).
+func (s *Service) AddScreenshot(ctx context.Context, caller identity.Identity, workID string, up *CoverUpload) (*ScreenshotDTO, error) {
+	w, err := s.d.Works.FindByID(ctx, strings.TrimSpace(workID))
+	if errors.Is(err, ErrNotFound) {
+		return nil, errWorkNotFound
+	}
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if err := checkOwnerOrAdmin(caller, w); err != nil {
+		return nil, err
+	}
+
+	var data []byte
+	if up != nil {
+		data = up.Data
+	}
+	contentType, ext, problem := s.d.Media.CheckImage(data)
+	if problem != "" {
+		problem = strings.ReplaceAll(problem, "cover", "gambar")
+		return nil, apperr.Validation(map[string]string{"image": problem})
+	}
+
+	key, err := s.d.Media.PutScreenshot(ctx, w.ID, data, contentType, ext)
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	id, err := NewUUID()
+	if err != nil {
+		s.deleteObjectAsync(key)
+		return nil, apperr.Internal(err)
+	}
+	sh := &Screenshot{ID: id, WorkID: w.ID, ObjectKey: key, ContentType: contentType, SizeBytes: int64(len(data))}
+	if err := s.d.Works.AddScreenshot(ctx, sh, MaxScreenshots); err != nil {
+		s.deleteObjectAsync(key)
+		switch {
+		case errors.Is(err, ErrScreenshotLimit):
+			return nil, errScreenshotLimit
+		case errors.Is(err, ErrNotFound):
+			return nil, errWorkNotFound
+		}
+		return nil, apperr.Internal(err)
+	}
+
+	s.invalidateCache(ctx, w.ID)
+	metrics.IncWorksAction("screenshot_added")
+	s.d.Logger.Info("audit: screenshot added", "work_id", w.ID, "image_id", id, "user_id", caller.UserID)
+	return &ScreenshotDTO{ID: id, URL: s.d.Media.ScreenshotURL(w.ID, id, key, w.Status == StatusPublished)}, nil
+}
+
+// DeleteScreenshot removes one extra image; the object is deleted after the row.
+func (s *Service) DeleteScreenshot(ctx context.Context, caller identity.Identity, workID, imageID string) error {
+	w, err := s.d.Works.FindByID(ctx, strings.TrimSpace(workID))
+	if errors.Is(err, ErrNotFound) {
+		return errWorkNotFound
+	}
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if err := checkOwnerOrAdmin(caller, w); err != nil {
+		return err
+	}
+	imageID = strings.TrimSpace(imageID)
+	sh, err := s.d.Works.FindScreenshot(ctx, w.ID, imageID)
+	if errors.Is(err, ErrScreenshotNotFound) {
+		return errScreenshotNotFound
+	}
+	if err != nil {
+		return apperr.Internal(err)
+	}
+	if err := s.d.Works.DeleteScreenshot(ctx, w.ID, sh.ID); err != nil {
+		if errors.Is(err, ErrScreenshotNotFound) {
+			return errScreenshotNotFound
+		}
+		return apperr.Internal(err)
+	}
+	s.deleteObjectAsync(sh.ObjectKey)
+	s.invalidateCache(ctx, w.ID)
+	metrics.IncWorksAction("screenshot_removed")
+	s.d.Logger.Info("audit: screenshot removed", "work_id", w.ID, "image_id", sh.ID, "user_id", caller.UserID)
+	return nil
+}
+
+// ScreenshotInfo lets the media module decide who may see a screenshot. A missing or
+// deleted work or screenshot is ErrNotFound. CoverInfo is reused: CoverKey holds the
+// screenshot's object key.
+func (s *Service) ScreenshotInfo(ctx context.Context, workID, imageID string) (*CoverInfo, error) {
+	w, err := s.d.Works.FindByID(ctx, strings.TrimSpace(workID))
+	if errors.Is(err, ErrNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	sh, err := s.d.Works.FindScreenshot(ctx, w.ID, strings.TrimSpace(imageID))
+	if errors.Is(err, ErrScreenshotNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &CoverInfo{
+		CoverKey:    sh.ObjectKey,
+		ContentType: sh.ContentType,
+		SizeBytes:   sh.SizeBytes,
 		Published:   w.Status == StatusPublished,
 	}, nil
 }

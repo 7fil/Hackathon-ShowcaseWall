@@ -25,6 +25,7 @@ func New(svc *service.Service) *Handler { return &Handler{svc: svc} }
 // public; access to non-published covers is decided by the signed query string.
 func (h *Handler) Routes(v1 *gin.RouterGroup) {
 	v1.GET("/media/works/:id/cover", h.streamCover)
+	v1.GET("/media/works/:id/screenshots/:imageId", h.streamScreenshot)
 }
 
 func (h *Handler) streamCover(c *gin.Context) {
@@ -33,6 +34,19 @@ func (h *Handler) streamCover(c *gin.Context) {
 		response.Fail(c, err)
 		return
 	}
+	writeStream(c, stream)
+}
+
+func (h *Handler) streamScreenshot(c *gin.Context) {
+	stream, err := h.svc.StreamScreenshot(c.Request.Context(), c.Param("id"), c.Param("imageId"), c.Query("exp"), c.Query("sig"))
+	if err != nil {
+		response.Fail(c, err)
+		return
+	}
+	writeStream(c, stream)
+}
+
+func writeStream(c *gin.Context, stream *service.Stream) {
 	defer stream.Body.Close()
 
 	hd := c.Writer.Header()

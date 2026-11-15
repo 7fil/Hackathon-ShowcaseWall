@@ -24,6 +24,7 @@ import (
 type Deps struct {
 	Storage    ObjectStorage
 	Works      WorkLookup // may be set later with SetWorkLookup to break the wiring cycle
+	Shots      ScreenshotLookup
 	Logger     *slog.Logger
 	SignSecret []byte
 	Now        func() time.Time
@@ -54,6 +55,9 @@ func New(d Deps) (*Service, error) {
 // SetWorkLookup binds the works lookup. Call it once while wiring, before the
 // server accepts traffic (works needs media and media needs works).
 func (s *Service) SetWorkLookup(l WorkLookup) { s.d.Works = l }
+
+// SetScreenshotLookup binds the screenshot lookup, with the same rules as SetWorkLookup.
+func (s *Service) SetScreenshotLookup(l ScreenshotLookup) { s.d.Shots = l }
 
 var errMediaNotFound = apperr.New(apperr.KindNotFound, "media_not_found", "Gambar tidak ditemukan")
 
@@ -118,6 +122,28 @@ func (s *Service) PutCover(ctx context.Context, workID string, data []byte, cont
 		return "", err
 	}
 	key := "works/" + workID + "/cover-" + name + ext
+	if err := s.d.Storage.Put(ctx, key, data, contentType); err != nil {
+		return "", err
+	}
+	return key, nil
+}
+
+// PutScreenshot stores an extra screenshot under works/{workID}/shot-{uuid}{ext}
+// and returns the key. The checks are the same as for a cover (CheckImage).
+func (s *Service) PutScreenshot(ctx context.Context, workID string, data []byte, contentType, ext string) (string, error) {
+	if !isUUID(workID) {
+		return "", errors.New("media: invalid work id")
+	}
+	switch ext {
+	case ".jpg", ".png", ".webp":
+	default:
+		return "", fmt.Errorf("media: unsupported extension %q", ext)
+	}
+	name, err := newUUID()
+	if err != nil {
+		return "", err
+	}
+	key := "works/" + workID + "/shot-" + name + ext
 	if err := s.d.Storage.Put(ctx, key, data, contentType); err != nil {
 		return "", err
 	}
@@ -224,6 +250,109 @@ func (s *Service) StreamCover(ctx context.Context, workID, expStr, sigStr string
 	}
 	if err != nil {
 		return nil, apperr.Internal(fmt.Errorf("read cover object: %w", err))
+	}
+
+	contentType := info.ContentType
+	if contentType == "" {
+		contentType = storedType
+	}
+	if info.SizeBytes > 0 {
+		size = info.SizeBytes
+	}
+	sum := sha256.Sum256([]byte(info.CoverKey))
+	metrics.IncMediaRequest("served")
+	return &Stream{
+		Body:        body,
+		ContentType: contentType,
+		Size:        size,
+		ETag:        `"` + hex.EncodeToString(sum[:8]) + `"`,
+		Public:      info.Published,
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Screenshots
+
+// StableScreenshotURL is the never-expiring URL of a screenshot of a Published work.
+func (s *Service) StableScreenshotURL(workID, imageID string) string {
+	return "/api/v1/media/works/" + workID + "/screenshots/" + imageID
+}
+
+// ScreenshotURL picks the stable URL for a Published work and a signed one otherwise.
+func (s *Service) ScreenshotURL(workID, imageID, objectKey string, published bool) string {
+	if published {
+		return s.StableScreenshotURL(workID, imageID)
+	}
+	exp := s.d.Now().Add(SignedURLTTL).Unix()
+	return fmt.Sprintf("%s?exp=%d&sig=%s", s.StableScreenshotURL(workID, imageID), exp, s.signScreenshot(workID, imageID, objectKey, exp))
+}
+
+func (s *Service) signScreenshot(workID, imageID, objectKey string, exp int64) string {
+	m := hmac.New(sha256.New, s.d.SignSecret)
+	m.Write([]byte("media-screenshot"))
+	m.Write([]byte{0})
+	m.Write([]byte(workID))
+	m.Write([]byte{0})
+	m.Write([]byte(imageID))
+	m.Write([]byte{0})
+	m.Write([]byte(objectKey))
+	m.Write([]byte{0})
+	m.Write([]byte(strconv.FormatInt(exp, 10)))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
+func (s *Service) verifyScreenshot(workID, imageID, objectKey, expStr, sigStr string) bool {
+	if expStr == "" || sigStr == "" {
+		return false
+	}
+	exp, err := strconv.ParseInt(expStr, 10, 64)
+	if err != nil || s.d.Now().Unix() > exp {
+		return false
+	}
+	got, err := hex.DecodeString(sigStr)
+	if err != nil {
+		return false
+	}
+	want, _ := hex.DecodeString(s.signScreenshot(workID, imageID, objectKey, exp))
+	return hmac.Equal(got, want)
+}
+
+// StreamScreenshot follows the same rule as StreamCover: a screenshot of a Published
+// work is public, any other needs a valid unexpired signature, and everything else is 404.
+func (s *Service) StreamScreenshot(ctx context.Context, workID, imageID, expStr, sigStr string) (*Stream, error) {
+	workID = strings.TrimSpace(workID)
+	imageID = strings.TrimSpace(imageID)
+	if s.d.Shots == nil {
+		return nil, apperr.Internal(errors.New("media: screenshot lookup not bound"))
+	}
+	if !isUUID(workID) || !isUUID(imageID) {
+		return nil, errMediaNotFound
+	}
+
+	info, err := s.d.Shots.LookupScreenshot(ctx, workID, imageID)
+	if errors.Is(err, ErrWorkNotFound) {
+		return nil, errMediaNotFound
+	}
+	if err != nil {
+		return nil, apperr.Internal(err)
+	}
+	if info.CoverKey == "" {
+		return nil, errMediaNotFound
+	}
+
+	if !info.Published && !s.verifyScreenshot(workID, imageID, info.CoverKey, expStr, sigStr) {
+		metrics.IncMediaRequest("refused")
+		s.d.Logger.Warn("media refused", "work_id", workID, "image_id", imageID, "reason", "bad_or_missing_signature")
+		return nil, errMediaNotFound
+	}
+
+	body, storedType, size, err := s.d.Storage.Get(ctx, info.CoverKey)
+	if errors.Is(err, ErrObjectNotFound) {
+		s.d.Logger.Error("screenshot object missing", "work_id", workID, "image_id", imageID)
+		return nil, errMediaNotFound
+	}
+	if err != nil {
+		return nil, apperr.Internal(fmt.Errorf("read screenshot object: %w", err))
 	}
 
 	contentType := info.ContentType

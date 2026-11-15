@@ -31,6 +31,7 @@ const (
 	DefaultPageLimit = 20
 	MaxPageLimit     = 20
 	MaxExhibition    = 300
+	MaxScreenshots   = 5
 
 	GalleryCacheTTL = 60 * time.Second
 	DetailCacheTTL  = 120 * time.Second
@@ -41,7 +42,27 @@ const (
 var (
 	ErrNotFound       = errors.New("work not found")
 	ErrStatusConflict = errors.New("work status conflict")
+
+	ErrScreenshotNotFound = errors.New("screenshot not found")
+	ErrScreenshotLimit    = errors.New("screenshot limit reached")
 )
+
+// Screenshot is an extra image of a work (not the cover).
+type Screenshot struct {
+	ID          string
+	WorkID      string
+	ObjectKey   string
+	Position    int
+	ContentType string
+	SizeBytes   int64
+}
+
+// ScreenshotDTO is what clients see: an id (for delete) and a URL (stable for a
+// Published work, signed otherwise).
+type ScreenshotDTO struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
 
 type Work struct {
 	ID               string
@@ -84,6 +105,8 @@ type PublicWorkDetail struct {
 	Benefits    string  `json:"benefits"`
 	DemoURL     *string `json:"demo_url"`
 	RepoURL     *string `json:"repo_url"`
+
+	Screenshots []ScreenshotDTO `json:"screenshots"`
 }
 
 type ManagedWork struct {
@@ -104,6 +127,8 @@ type ManagedWork struct {
 	PublishedAt *time.Time `json:"published_at"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+
+	Screenshots []ScreenshotDTO `json:"screenshots"`
 }
 
 type DashboardSummary struct {
@@ -198,6 +223,13 @@ type WorkRepository interface {
 
 	ListManaged(ctx context.Context, f ManagedListFilter, cursorTime *time.Time, cursorID string) ([]*Work, error)
 	GetSummary(ctx context.Context, ownerID string) (DashboardSummary, error)
+
+	// Screenshots. AddScreenshot returns ErrNotFound for a missing work and
+	// ErrScreenshotLimit when the work already has max screenshots.
+	ListScreenshots(ctx context.Context, workID string) ([]Screenshot, error)
+	FindScreenshot(ctx context.Context, workID, imageID string) (*Screenshot, error)
+	AddScreenshot(ctx context.Context, sh *Screenshot, max int) error
+	DeleteScreenshot(ctx context.Context, workID, imageID string) error
 }
 
 // MediaStore is implemented by the media module's service. Works never talks to
@@ -211,6 +243,10 @@ type MediaStore interface {
 	DeleteObject(ctx context.Context, key string) error
 	// CoverURL is the stable URL for a Published work and a signed one otherwise.
 	CoverURL(workID, coverKey string, published bool) string
+	// PutScreenshot stores an extra image and returns the random object key.
+	PutScreenshot(ctx context.Context, workID string, data []byte, contentType, ext string) (key string, err error)
+	// ScreenshotURL is the stable URL for a Published work and a signed one otherwise.
+	ScreenshotURL(workID, imageID, objectKey string, published bool) string
 }
 
 // CoverInfo is what the media module needs to decide who may see a cover.

@@ -331,3 +331,98 @@ func looksLikeUUID(s string) bool {
 	}
 	return true
 }
+
+// ---------------------------------------------------------------------------
+// Screenshots
+
+type screenshotModel struct {
+	ID          string `gorm:"column:id;type:uuid;primaryKey"`
+	WorkID      string `gorm:"column:work_id;type:uuid"`
+	ObjectKey   string `gorm:"column:object_key"`
+	Position    int    `gorm:"column:position"`
+	ContentType string `gorm:"column:content_type"`
+	SizeBytes   int64  `gorm:"column:size_bytes"`
+}
+
+func (screenshotModel) TableName() string { return "work_screenshots" }
+
+func (m screenshotModel) toDomain() service.Screenshot {
+	return service.Screenshot{
+		ID: m.ID, WorkID: m.WorkID, ObjectKey: m.ObjectKey,
+		Position: m.Position, ContentType: m.ContentType, SizeBytes: m.SizeBytes,
+	}
+}
+
+func (r *WorkRepo) ListScreenshots(ctx context.Context, workID string) ([]service.Screenshot, error) {
+	if !looksLikeUUID(workID) {
+		return nil, nil
+	}
+	var rows []screenshotModel
+	if err := r.db.WithContext(ctx).Where("work_id = ?", workID).Order("position ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]service.Screenshot, 0, len(rows))
+	for _, m := range rows {
+		out = append(out, m.toDomain())
+	}
+	return out, nil
+}
+
+func (r *WorkRepo) FindScreenshot(ctx context.Context, workID, imageID string) (*service.Screenshot, error) {
+	if !looksLikeUUID(workID) || !looksLikeUUID(imageID) {
+		return nil, service.ErrScreenshotNotFound
+	}
+	var m screenshotModel
+	err := r.db.WithContext(ctx).Where("id = ? AND work_id = ?", imageID, workID).First(&m).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, service.ErrScreenshotNotFound
+		}
+		return nil, err
+	}
+	sh := m.toDomain()
+	return &sh, nil
+}
+
+// AddScreenshot locks the work row so two uploads cannot both pass the limit check.
+func (r *WorkRepo) AddScreenshot(ctx context.Context, sh *service.Screenshot, max int) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var locked string
+		if err := tx.Raw("SELECT id FROM works WHERE id = ? AND deleted_at IS NULL FOR UPDATE", sh.WorkID).Scan(&locked).Error; err != nil {
+			return err
+		}
+		if locked == "" {
+			return service.ErrNotFound
+		}
+		var next struct {
+			Count int
+			Next  int
+		}
+		if err := tx.Raw("SELECT COUNT(*) AS count, COALESCE(MAX(position), 0) + 1 AS next FROM work_screenshots WHERE work_id = ?", sh.WorkID).Scan(&next).Error; err != nil {
+			return err
+		}
+		if next.Count >= max {
+			return service.ErrScreenshotLimit
+		}
+		sh.Position = next.Next
+		m := screenshotModel{
+			ID: sh.ID, WorkID: sh.WorkID, ObjectKey: sh.ObjectKey,
+			Position: sh.Position, ContentType: sh.ContentType, SizeBytes: sh.SizeBytes,
+		}
+		return tx.Create(&m).Error
+	})
+}
+
+func (r *WorkRepo) DeleteScreenshot(ctx context.Context, workID, imageID string) error {
+	if !looksLikeUUID(workID) || !looksLikeUUID(imageID) {
+		return service.ErrScreenshotNotFound
+	}
+	res := r.db.WithContext(ctx).Where("id = ? AND work_id = ?", imageID, workID).Delete(&screenshotModel{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return service.ErrScreenshotNotFound
+	}
+	return nil
+}
