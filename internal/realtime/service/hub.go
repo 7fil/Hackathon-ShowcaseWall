@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,7 +78,7 @@ func (h *Hub) Run(ctx context.Context) {
 
 // CheckHandshake validates Origin and per-IP handshake rate limits before upgrading.
 func (h *Hub) CheckHandshake(ctx context.Context, origin, ip string) error {
-	if h.frontendOrigin != "" && origin != h.frontendOrigin {
+	if h.frontendOrigin != "" && !isAllowedWSOrigin(origin, h.frontendOrigin) {
 		metrics.IncWSHandshakeRejected("bad_origin")
 		h.log.Warn("audit: websocket handshake rejected", "reason", "bad_origin", "origin", origin, "ip", ip)
 		return ErrOriginForbidden
@@ -181,4 +182,20 @@ func (h *Hub) Broadcast(msg []byte) {
 	for _, c := range slow {
 		h.Unregister(c, "slow_client")
 	}
+}
+
+func isAllowedWSOrigin(reqOrigin, configured string) bool {
+	reqOrigin = strings.TrimRight(strings.TrimSpace(reqOrigin), "/")
+	if reqOrigin == "" {
+		return true // allow non-browser WS tools like Apidog / wscat when Origin is omitted
+	}
+	for _, allowed := range strings.Split(configured, ",") {
+		if strings.TrimRight(strings.TrimSpace(allowed), "/") == reqOrigin {
+			return true
+		}
+	}
+	return strings.HasPrefix(reqOrigin, "http://localhost:") ||
+		strings.HasPrefix(reqOrigin, "http://127.0.0.1:") ||
+		reqOrigin == "http://localhost" ||
+		reqOrigin == "http://127.0.0.1"
 }

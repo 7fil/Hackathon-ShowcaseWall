@@ -17,11 +17,10 @@ import (
 
 const (
 	refreshCookieName = "refresh_token"
-	refreshCookiePath = "/api/v1/auth" // the browser sends the cookie to /auth/* only
+	refreshCookiePath = "/api/v1/auth" 
 	maxBodyBytes      = 16 << 10
 )
 
-// Per-IP limits from the backend spec: 20 requests per hour on each endpoint group.
 const (
 	ipLimit  = 20
 	ipWindow = time.Hour

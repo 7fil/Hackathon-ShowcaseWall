@@ -3,12 +3,12 @@
   "info": {
     "title": "BCC Showcase Wall API",
     "version": "1.0.0",
-    "description": "RESTful API & WebSocket contract for **BCC Showcase Wall**.\n\n### Current Implementation Status\n- **Implemented & Live (`Auth` & `Health`)**: `/health`, `/api/v1/auth/register`, `/api/v1/auth/login`, `/api/v1/auth/otp/verify`, `/api/v1/auth/otp/resend`, `/api/v1/auth/oauth/firebase`, `/api/v1/auth/refresh`, `/api/v1/auth/logout`, `/api/v1/me`.\n- **Planned Contract (`Works`, `Media`, `Admin`)**: Matches Section 7 of the Frontend PRD and the Backend Spec.\n\n### WebSocket Contract (`WS /ws/wall`)\n- **URL**: `wss://group4-be.bccdev.id/ws/wall` (or `ws://localhost:8080/ws/wall`)\n- **Access**: Public, read-only (server ignores client messages except pong; checks `Origin: https://group4.bccdev.id`).\n- **Envelope**: `{ \"type\": string, \"seq\": number, \"payload\": object }`\n- **Events**:\n  - `work.published`: `{ \"id\", \"title\", \"summary\", \"category\", \"tech_stack\", \"team_members\", \"cover_url\", \"published_at\" }`\n  - `work.unpublished`: `{ \"id\": \"uuid-karya\" }`\n  - `work.deleted`: `{ \"id\": \"uuid-karya\" }`"
+    "description": "RESTful API & WebSocket contract for **BCC Showcase Wall** — **Apidog Ready with Auto-Fill Tokens & Prefilled Examples**.\n\n### ⚡ Apidog Zero-Guessing Quickstart (Auto-Fill Enabled)\n1. **Import this `api-docs.json` into Apidog** (Settings → Import → OpenAPI/Swagger).\n2. **One-Click Login (Auto-Saves `{{access_token}}`)**:\n   - Open **`POST /api/v1/auth/login`** → Select the **\"Seeded Admin Login\"** example → Click **Send**.\n   - Returns `200 OK` immediately (no OTP required for verified accounts!) and automatically saves `data.access_token` into your Apidog `{{access_token}}` environment variable and sets the `refresh_token` HttpOnly cookie.\n3. **Create a Work (Auto-Saves `{{work_id}}`)**:\n   - Open **`POST /api/v1/works`** → All form fields (`title`, `summary`, `description`, `benefits`, `category`, `tech_stack`, `team_members`, `demo_url`, `repo_url`) are pre-filled! Just pick any `.jpg`/`.png`/`.webp` file for `cover` and click **Send**.\n   - Automatically saves `data.id` into `{{work_id}}`, so all `/works/{id}` and `/admin/works/{id}/*` endpoints are pre-filled with your newly created work ID!\n\n### 🔌 WebSocket Contract (`WS /ws/wall`)\n- **URL**: `wss://group5-be.bccdev.id/ws/wall` (or `ws://localhost:8080/ws/wall`)\n- **Access**: Public, read-only.\n- **Envelope**: `{ \"type\": string, \"seq\": number, \"payload\": object }`\n- **Events**: `work.published`, `work.unpublished`, `work.deleted`"
   },
   "servers": [
     {
-      "url": "https://group4-be.bccdev.id",
-      "description": "Production / Staging VM"
+      "url": "https://group5-be.bccdev.id",
+      "description": "Production / Staging VM (Group 5)"
     },
     {
       "url": "http://localhost:8080",
@@ -47,7 +47,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "JWT",
-        "description": "15-minute HS256 JWT access token returned by `/api/v1/auth/otp/verify`, `/api/v1/auth/oauth/firebase`, or `/api/v1/auth/refresh`."
+        "description": "Uses `{{access_token}}` automatically populated when you call `/api/v1/auth/login`, `/api/v1/auth/otp/verify`, `/api/v1/auth/oauth/firebase`, or `/api/v1/auth/refresh`."
       },
       "RefreshCookie": {
         "type": "apiKey",
@@ -472,19 +472,37 @@
                     "type": "string",
                     "minLength": 2,
                     "maxLength": 100,
-                    "example": "Bagas Pratama"
+                    "example": "Bagas Pratama",
+                    "default": "Bagas Pratama"
                   },
                   "email": {
                     "type": "string",
                     "format": "email",
                     "maxLength": 254,
-                    "example": "bagas@bccdev.id"
+                    "example": "bagas@bccdev.id",
+                    "default": "bagas@bccdev.id"
                   },
                   "password": {
                     "type": "string",
                     "minLength": 8,
                     "maxLength": 72,
-                    "example": "SecretPass123!"
+                    "example": "SecretPass123!",
+                    "default": "123456789"
+                  }
+                }
+              },
+              "example": {
+                "name": "Bagas Pratama",
+                "email": "bagas@bccdev.id",
+                "password": "123456789"
+              },
+              "examples": {
+                "contributor_register": {
+                  "summary": "Register New Contributor (Sends 6-Digit OTP)",
+                  "value": {
+                    "name": "Bagas Pratama",
+                    "email": "bagas@bccdev.id",
+                    "password": "123456789"
                   }
                 }
               }
@@ -583,8 +601,8 @@
         "tags": [
           "Auth"
         ],
-        "summary": "Start Login with Email & Password (Send OTP)",
-        "description": "Verifies email and password in constant time (5 failed logins per 15m per email lock), then sends a 6-digit OTP code to the user's email. Note: OAuth-only users without a password receive the same generic 401 response.",
+        "summary": "Login with Email & Password (Direct Token & Auto-Fill)",
+        "description": "Verifies `email` and `password` for a verified account and **immediately returns `200 OK`** with `access_token`, `user`, and sets the `HttpOnly` `refresh_token` cookie (no OTP step needed on login!). Automatically saves `access_token` to Apidog's `{{access_token}}` variable.",
         "operationId": "loginUser",
         "requestBody": {
           "required": true,
@@ -600,11 +618,40 @@
                   "email": {
                     "type": "string",
                     "format": "email",
-                    "example": "bagas@bccdev.id"
+                    "example": "admin123@showcase.com",
+                    "default": "admin123@showcase.com"
                   },
                   "password": {
                     "type": "string",
-                    "example": "SecretPass123!"
+                    "example": "123456789",
+                    "default": "123456789"
+                  }
+                }
+              },
+              "example": {
+                "email": "admin123@showcase.com",
+                "password": "123456789"
+              },
+              "examples": {
+                "seeded_admin_123": {
+                  "summary": "1. Seeded Admin (admin123@showcase.com)",
+                  "value": {
+                    "email": "admin123@showcase.com",
+                    "password": "123456789"
+                  }
+                },
+                "seeded_admin_default": {
+                  "summary": "2. Seeded Admin (admin@showcase.com)",
+                  "value": {
+                    "email": "admin@showcase.com",
+                    "password": "123456789"
+                  }
+                },
+                "contributor_login": {
+                  "summary": "3. Contributor (bagas@bccdev.id)",
+                  "value": {
+                    "email": "bagas@bccdev.id",
+                    "password": "123456789"
                   }
                 }
               }
@@ -612,21 +659,6 @@
           }
         },
         "responses": {
-          "202": {
-            "description": "Credentials valid; OTP code sent to email",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "$ref": "#/components/schemas/CodeSentData"
-                    }
-                  }
-                }
-              }
-            }
-          },
           "401": {
             "description": "Wrong email or password (`invalid_credentials`)",
             "content": {
@@ -662,8 +694,48 @@
                 }
               }
             }
+          },
+          "200": {
+            "description": "Login succeeded; returns access_token + user and sets refresh_token cookie",
+            "headers": {
+              "Set-Cookie": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "refresh_token=<opaque_token>; Path=/api/v1/auth; HttpOnly; Secure; SameSite=Lax"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/AuthSuccessData"
+                    }
+                  }
+                }
+              }
+            }
           }
-        }
+        },
+        "x-apidog-post-processors": [
+          {
+            "type": "extractor",
+            "Enable": true,
+            "data": {
+              "variableName": "access_token",
+              "variableType": "environment",
+              "expression": "$.data.access_token",
+              "source": "body"
+            }
+          },
+          {
+            "type": "customScript",
+            "Enable": true,
+            "data": "if (pm.response.code === 200) { var j = pm.response.json(); if (j && j.data && j.data.access_token) { pm.environment.set('access_token', j.data.access_token); pm.globals.set('access_token', j.data.access_token); } }"
+          }
+        ]
       }
     },
     "/api/v1/auth/otp/verify": {
@@ -689,12 +761,14 @@
                   "email": {
                     "type": "string",
                     "format": "email",
-                    "example": "bagas@bccdev.id"
+                    "example": "bagas@bccdev.id",
+                    "default": "bagas@bccdev.id"
                   },
                   "code": {
                     "type": "string",
                     "pattern": "^[0-9]{6}$",
-                    "example": "482910"
+                    "example": "482910",
+                    "default": "123456"
                   },
                   "purpose": {
                     "type": "string",
@@ -702,7 +776,23 @@
                       "register",
                       "login"
                     ],
-                    "example": "login"
+                    "example": "login",
+                    "default": "register"
+                  }
+                }
+              },
+              "example": {
+                "email": "bagas@bccdev.id",
+                "code": "123456",
+                "purpose": "register"
+              },
+              "examples": {
+                "verify_registration": {
+                  "summary": "Verify Registration OTP (Creates Contributor & Auto-Fills Token)",
+                  "value": {
+                    "email": "bagas@bccdev.id",
+                    "code": "123456",
+                    "purpose": "register"
                   }
                 }
               }
@@ -789,7 +879,24 @@
               }
             }
           }
-        }
+        },
+        "x-apidog-post-processors": [
+          {
+            "type": "extractor",
+            "Enable": true,
+            "data": {
+              "variableName": "access_token",
+              "variableType": "environment",
+              "expression": "$.data.access_token",
+              "source": "body"
+            }
+          },
+          {
+            "type": "customScript",
+            "Enable": true,
+            "data": "if (pm.response.code === 200) { var j = pm.response.json(); if (j && j.data && j.data.access_token) { pm.environment.set('access_token', j.data.access_token); pm.globals.set('access_token', j.data.access_token); } }"
+          }
+        ]
       }
     },
     "/api/v1/auth/otp/resend": {
@@ -814,7 +921,8 @@
                   "email": {
                     "type": "string",
                     "format": "email",
-                    "example": "bagas@bccdev.id"
+                    "example": "bagas@bccdev.id",
+                    "default": "bagas@bccdev.id"
                   },
                   "purpose": {
                     "type": "string",
@@ -822,9 +930,14 @@
                       "register",
                       "login"
                     ],
-                    "example": "register"
+                    "example": "register",
+                    "default": "register"
                   }
                 }
+              },
+              "example": {
+                "email": "bagas@bccdev.id",
+                "purpose": "register"
               }
             }
           }
@@ -889,9 +1002,13 @@
                   "id_token": {
                     "type": "string",
                     "description": "Firebase ID Token returned by `userCredential.user.getIdToken()`",
-                    "example": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2..."
+                    "example": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjE2...",
+                    "default": "{{firebase_id_token}}"
                   }
                 }
+              },
+              "example": {
+                "id_token": "{{firebase_id_token}}"
               }
             }
           }
@@ -1013,7 +1130,24 @@
               }
             }
           }
-        }
+        },
+        "x-apidog-post-processors": [
+          {
+            "type": "extractor",
+            "Enable": true,
+            "data": {
+              "variableName": "access_token",
+              "variableType": "environment",
+              "expression": "$.data.access_token",
+              "source": "body"
+            }
+          },
+          {
+            "type": "customScript",
+            "Enable": true,
+            "data": "if (pm.response.code === 200) { var j = pm.response.json(); if (j && j.data && j.data.access_token) { pm.environment.set('access_token', j.data.access_token); pm.globals.set('access_token', j.data.access_token); } }"
+          }
+        ]
       }
     },
     "/api/v1/auth/refresh": {
@@ -1088,7 +1222,37 @@
               }
             }
           }
-        }
+        },
+        "x-apidog-post-processors": [
+          {
+            "type": "extractor",
+            "Enable": true,
+            "data": {
+              "variableName": "access_token",
+              "variableType": "environment",
+              "expression": "$.data.access_token",
+              "source": "body"
+            }
+          },
+          {
+            "type": "customScript",
+            "Enable": true,
+            "data": "if (pm.response.code === 200) { var j = pm.response.json(); if (j && j.data && j.data.access_token) { pm.environment.set('access_token', j.data.access_token); pm.globals.set('access_token', j.data.access_token); } }"
+          }
+        ],
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "https://group5.bccdev.id",
+              "example": "https://group5.bccdev.id"
+            },
+            "description": "Pre-filled allowed Frontend Origin for CSRF protection check"
+          }
+        ]
       }
     },
     "/api/v1/auth/logout": {
@@ -1131,7 +1295,20 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "Origin",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "https://group5.bccdev.id",
+              "example": "https://group5.bccdev.id"
+            },
+            "description": "Pre-filled allowed Frontend Origin for CSRF protection check"
+          }
+        ]
       }
     },
     "/api/v1/me": {
@@ -1189,7 +1366,8 @@
             "name": "q",
             "in": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "Smart Campus"
             },
             "description": "Case-insensitive title search"
           },
@@ -1197,7 +1375,8 @@
             "name": "category",
             "in": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "IoT & Hardware"
             },
             "description": "Filter by category (case-insensitive)"
           },
@@ -1205,7 +1384,8 @@
             "name": "tech_stack",
             "in": "query",
             "schema": {
-              "type": "string"
+              "type": "string",
+              "example": "Go"
             },
             "description": "Filter by tech stack item (case-insensitive)"
           },
@@ -1223,7 +1403,8 @@
             "schema": {
               "type": "integer",
               "default": 20,
-              "maximum": 20
+              "maximum": 20,
+              "example": 20
             },
             "description": "Max items per page (capped at 20)"
           }
@@ -1284,25 +1465,32 @@
                   "title": {
                     "type": "string",
                     "minLength": 3,
-                    "example": "Smart Campus IoT Monitor"
+                    "example": "Smart Campus IoT Monitor",
+                    "default": "Smart Campus IoT Monitor"
                   },
                   "summary": {
                     "type": "string",
                     "maxLength": 160,
-                    "example": "Pemantauan kualitas udara dan konsumsi energi gedung kampus secara realtime."
+                    "example": "Pemantauan kualitas udara dan konsumsi energi gedung kampus secara realtime.",
+                    "default": "Pemantauan kualitas udara dan konsumsi energi gedung kampus secara realtime."
                   },
                   "description": {
                     "type": "string",
-                    "minLength": 10
+                    "minLength": 10,
+                    "default": "Sistem pemantauan berbasis sensor ESP32 yang terintegrasi dengan dashboard web realtime untuk memantau suhu, kelembapan, CO2, dan pemakaian listrik.",
+                    "example": "Sistem pemantauan berbasis sensor ESP32 yang terintegrasi dengan dashboard web realtime untuk memantau suhu, kelembapan, CO2, dan pemakaian listrik."
                   },
                   "benefits": {
                     "type": "string",
-                    "minLength": 10
+                    "minLength": 10,
+                    "default": "Membantu pengelola gedung menghemat energi hingga 20% dan mendeteksi ruangan berventilasi buruk secara otomatis.",
+                    "example": "Membantu pengelola gedung menghemat energi hingga 20% dan mendeteksi ruangan berventilasi buruk secara otomatis."
                   },
                   "category": {
                     "type": "string",
                     "maxLength": 50,
-                    "example": "IoT & Hardware"
+                    "example": "IoT & Hardware",
+                    "default": "IoT & Hardware"
                   },
                   "tech_stack": {
                     "type": "array",
@@ -1310,7 +1498,17 @@
                       "type": "string"
                     },
                     "minItems": 1,
-                    "maxItems": 10
+                    "maxItems": 10,
+                    "default": [
+                      "Go",
+                      "Next.js",
+                      "PostgreSQL"
+                    ],
+                    "example": [
+                      "Go",
+                      "Next.js",
+                      "PostgreSQL"
+                    ]
                   },
                   "team_members": {
                     "type": "array",
@@ -1318,15 +1516,27 @@
                       "type": "string"
                     },
                     "minItems": 1,
-                    "maxItems": 10
+                    "maxItems": 10,
+                    "default": [
+                      "Bagas Pratama",
+                      "Nadia Putri"
+                    ],
+                    "example": [
+                      "Bagas Pratama",
+                      "Nadia Putri"
+                    ]
                   },
                   "demo_url": {
                     "type": "string",
-                    "format": "uri"
+                    "format": "uri",
+                    "default": "https://group5.bccdev.id",
+                    "example": "https://group5.bccdev.id"
                   },
                   "repo_url": {
                     "type": "string",
-                    "format": "uri"
+                    "format": "uri",
+                    "default": "https://github.com/7fil/Hackathon-ShowcaseWall",
+                    "example": "https://github.com/7fil/Hackathon-ShowcaseWall"
                   },
                   "cover": {
                     "type": "string",
@@ -1374,7 +1584,24 @@
               }
             }
           }
-        }
+        },
+        "x-apidog-post-processors": [
+          {
+            "type": "extractor",
+            "Enable": true,
+            "data": {
+              "variableName": "work_id",
+              "variableType": "environment",
+              "expression": "$.data.id",
+              "source": "body"
+            }
+          },
+          {
+            "type": "customScript",
+            "Enable": true,
+            "data": "if (pm.response.code === 200 || pm.response.code === 201) { var j = pm.response.json(); if (j && j.data && j.data.id) { pm.environment.set('work_id', j.data.id); pm.globals.set('work_id', j.data.id); } }"
+          }
+        ]
       }
     },
     "/api/v1/works/featured": {
@@ -1510,8 +1737,11 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
-            }
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            },
+            "description": "Work UUID (auto-filled from `{{work_id}}` after creating a work)"
           }
         ],
         "responses": {
@@ -1561,8 +1791,11 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
-            }
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            },
+            "description": "Work UUID (auto-filled from `{{work_id}}` after creating a work)"
           }
         ],
         "requestBody": {
@@ -1583,43 +1816,77 @@
                 "properties": {
                   "title": {
                     "type": "string",
-                    "minLength": 3
+                    "minLength": 3,
+                    "default": "Smart Campus IoT Monitor v2",
+                    "example": "Smart Campus IoT Monitor v2"
                   },
                   "summary": {
                     "type": "string",
-                    "maxLength": 160
+                    "maxLength": 160,
+                    "default": "Pemantauan kualitas udara dan konsumsi energi gedung kampus secara realtime (Updated).",
+                    "example": "Pemantauan kualitas udara dan konsumsi energi gedung kampus secara realtime (Updated)."
                   },
                   "description": {
                     "type": "string",
-                    "minLength": 10
+                    "minLength": 10,
+                    "default": "Sistem pemantauan berbasis sensor ESP32 yang telah diperbarui dengan notifikasi otomatis dan analitik mingguan.",
+                    "example": "Sistem pemantauan berbasis sensor ESP32 yang telah diperbarui dengan notifikasi otomatis dan analitik mingguan."
                   },
                   "benefits": {
                     "type": "string",
-                    "minLength": 10
+                    "minLength": 10,
+                    "default": "Membantu pengelola gedung menghemat energi hingga 25% dengan deteksi anomali beban listrik.",
+                    "example": "Membantu pengelola gedung menghemat energi hingga 25% dengan deteksi anomali beban listrik."
                   },
                   "category": {
                     "type": "string",
-                    "maxLength": 50
+                    "maxLength": 50,
+                    "default": "IoT & Hardware",
+                    "example": "IoT & Hardware"
                   },
                   "tech_stack": {
                     "type": "array",
                     "items": {
                       "type": "string"
-                    }
+                    },
+                    "default": [
+                      "Go",
+                      "Next.js",
+                      "Redis",
+                      "PostgreSQL"
+                    ],
+                    "example": [
+                      "Go",
+                      "Next.js",
+                      "Redis",
+                      "PostgreSQL"
+                    ]
                   },
                   "team_members": {
                     "type": "array",
                     "items": {
                       "type": "string"
-                    }
+                    },
+                    "default": [
+                      "Bagas Pratama",
+                      "Nadia Putri"
+                    ],
+                    "example": [
+                      "Bagas Pratama",
+                      "Nadia Putri"
+                    ]
                   },
                   "demo_url": {
                     "type": "string",
-                    "format": "uri"
+                    "format": "uri",
+                    "default": "https://group5.bccdev.id",
+                    "example": "https://group5.bccdev.id"
                   },
                   "repo_url": {
                     "type": "string",
-                    "format": "uri"
+                    "format": "uri",
+                    "default": "https://github.com/7fil/Hackathon-ShowcaseWall",
+                    "example": "https://github.com/7fil/Hackathon-ShowcaseWall"
                   },
                   "cover": {
                     "type": "string",
@@ -1708,8 +1975,11 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
-            }
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            },
+            "description": "Work UUID (auto-filled from `{{work_id}}` after creating a work)"
           }
         ],
         "responses": {
@@ -1764,7 +2034,9 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
             }
           }
         ],
@@ -1911,7 +2183,9 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
             }
           }
         ],
@@ -2174,8 +2448,11 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
-            }
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            },
+            "description": "Work UUID (auto-filled from `{{work_id}}`)"
           }
         ],
         "responses": {
@@ -2257,8 +2534,11 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
-            }
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            },
+            "description": "Work UUID (auto-filled from `{{work_id}}`)"
           }
         ],
         "responses": {
@@ -2340,8 +2620,11 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
-            }
+              "format": "uuid",
+              "default": "{{work_id}}",
+              "example": "550e8400-e29b-41d4-a716-446655440000"
+            },
+            "description": "Work UUID (auto-filled from `{{work_id}}`)"
           }
         ],
         "requestBody": {
@@ -2356,7 +2639,25 @@
                 "properties": {
                   "is_featured": {
                     "type": "boolean",
-                    "example": true
+                    "example": true,
+                    "default": true
+                  }
+                }
+              },
+              "example": {
+                "is_featured": true
+              },
+              "examples": {
+                "set_featured": {
+                  "summary": "Mark Work as Featured",
+                  "value": {
+                    "is_featured": true
+                  }
+                },
+                "unfeature": {
+                  "summary": "Remove Featured Mark",
+                  "value": {
+                    "is_featured": false
                   }
                 }
               }

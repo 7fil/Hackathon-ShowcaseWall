@@ -89,15 +89,34 @@ func Recovery(log *slog.Logger) gin.HandlerFunc {
 	}
 }
 
-// CORS allows credentialed requests from the frontend origin only.
+// IsAllowedOrigin checks if reqOrigin matches any comma-separated origin in configured
+// or is a local development origin (localhost / 127.0.0.1).
+func IsAllowedOrigin(reqOrigin, configured string) bool {
+	reqOrigin = strings.TrimRight(strings.TrimSpace(reqOrigin), "/")
+	if reqOrigin == "" {
+		return false
+	}
+	for _, allowed := range strings.Split(configured, ",") {
+		if strings.TrimRight(strings.TrimSpace(allowed), "/") == reqOrigin {
+			return true
+		}
+	}
+	return strings.HasPrefix(reqOrigin, "http://localhost:") ||
+		strings.HasPrefix(reqOrigin, "http://127.0.0.1:") ||
+		reqOrigin == "http://localhost" ||
+		reqOrigin == "http://127.0.0.1"
+}
+
+// CORS allows credentialed requests from the configured frontend origins and localhost.
 func CORS(origin string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.GetHeader("Origin") == origin {
+		reqOrigin := c.GetHeader("Origin")
+		if IsAllowedOrigin(reqOrigin, origin) {
 			h := c.Writer.Header()
-			h.Set("Access-Control-Allow-Origin", origin)
+			h.Set("Access-Control-Allow-Origin", reqOrigin)
 			h.Set("Access-Control-Allow-Credentials", "true")
-			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, X-Requested-With")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			h.Set("Access-Control-Expose-Headers", "Retry-After, X-Request-ID")
 			h.Set("Access-Control-Max-Age", "600")
 		}
@@ -111,10 +130,10 @@ func CORS(origin string) gin.HandlerFunc {
 }
 
 // RequireOrigin protects cookie-authenticated routes: when the browser sends an
-// Origin header it must be the frontend origin.
+// Origin header it must be an allowed frontend origin.
 func RequireOrigin(origin string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if o := c.GetHeader("Origin"); o != "" && o != origin {
+		if o := c.GetHeader("Origin"); o != "" && !IsAllowedOrigin(o, origin) {
 			response.Fail(c, apperr.New(apperr.KindForbidden, "forbidden_origin", "Asal permintaan tidak diizinkan"))
 			return
 		}
