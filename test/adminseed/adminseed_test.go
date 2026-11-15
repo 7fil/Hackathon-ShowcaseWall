@@ -1,4 +1,4 @@
-package adminseed
+package adminseed_test
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/adminseed"
 )
 
 type fakeStore struct {
@@ -17,7 +19,7 @@ type fakeStore struct {
 	calls []string
 }
 
-func (f *fakeStore) PromoteToAdmin(_ context.Context, email string) (Outcome, error) {
+func (f *fakeStore) PromoteToAdmin(_ context.Context, email string) (adminseed.Outcome, error) {
 	f.calls = append(f.calls, email)
 	if e := f.err[email]; e != nil {
 		return "", e
@@ -25,18 +27,18 @@ func (f *fakeStore) PromoteToAdmin(_ context.Context, email string) (Outcome, er
 	role, ok := f.roles[email]
 	switch {
 	case !ok:
-		return NotFound, nil
+		return adminseed.NotFound, nil
 	case role == "Admin":
-		return AlreadyAdmin, nil
+		return adminseed.AlreadyAdmin, nil
 	}
 	f.roles[email] = "Admin"
-	return Promoted, nil
+	return adminseed.Promoted, nil
 }
 
 func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
 
 func TestParseEmails(t *testing.T) {
-	valid, invalid := ParseEmails([]string{"A@Example.com,b@example.com", " a@example.com ", "nope", "Name <c@example.com>", "d@example.com;e@example.com"})
+	valid, invalid := adminseed.ParseEmails([]string{"A@Example.com,b@example.com", " a@example.com ", "nope", "Name <c@example.com>", "d@example.com;e@example.com"})
 	wantValid := []string{"a@example.com", "b@example.com", "d@example.com", "e@example.com"}
 	if !reflect.DeepEqual(valid, wantValid) {
 		t.Errorf("valid = %v, want %v", valid, wantValid)
@@ -44,7 +46,7 @@ func TestParseEmails(t *testing.T) {
 	if len(invalid) != 3 { // "nope", "Name", "<c@example.com>" (split on space)
 		t.Errorf("invalid = %v", invalid)
 	}
-	if v, i := ParseEmails([]string{strings.Repeat("a", 250) + "@example.com"}); len(v) != 0 || len(i) != 1 {
+	if v, i := adminseed.ParseEmails([]string{strings.Repeat("a", 250) + "@example.com"}); len(v) != 0 || len(i) != 1 {
 		t.Error("over-long email must be rejected")
 	}
 }
@@ -52,7 +54,7 @@ func TestParseEmails(t *testing.T) {
 func TestRunPromotesSeveralAtOnce(t *testing.T) {
 	st := &fakeStore{roles: map[string]string{"a@x.com": "Contributor", "b@x.com": "Contributor", "c@x.com": "Admin"}}
 	var out bytes.Buffer
-	code := Run(context.Background(), st, []string{"a@x.com", "b@x.com,c@x.com"}, &out, quiet())
+	code := adminseed.Run(context.Background(), st, []string{"a@x.com", "b@x.com,c@x.com"}, &out, quiet())
 	if code != 0 {
 		t.Fatalf("exit = %d\n%s", code, out.String())
 	}
@@ -67,7 +69,7 @@ func TestRunPromotesSeveralAtOnce(t *testing.T) {
 func TestRunDoesNotCreateUnknownAccounts(t *testing.T) {
 	st := &fakeStore{roles: map[string]string{"a@x.com": "Contributor"}}
 	var out bytes.Buffer
-	code := Run(context.Background(), st, []string{"a@x.com", "ghost@x.com"}, &out, quiet())
+	code := adminseed.Run(context.Background(), st, []string{"a@x.com", "ghost@x.com"}, &out, quiet())
 	if code != 1 {
 		t.Errorf("an unknown email must make the command fail, exit = %d", code)
 	}
@@ -85,7 +87,7 @@ func TestRunContinuesAfterStoreError(t *testing.T) {
 		err:   map[string]error{"a@x.com": errors.New("db down")},
 	}
 	var out bytes.Buffer
-	if code := Run(context.Background(), st, []string{"a@x.com", "b@x.com"}, &out, quiet()); code != 1 {
+	if code := adminseed.Run(context.Background(), st, []string{"a@x.com", "b@x.com"}, &out, quiet()); code != 1 {
 		t.Errorf("exit = %d", code)
 	}
 	if st.roles["b@x.com"] != "Admin" {
@@ -96,7 +98,7 @@ func TestRunContinuesAfterStoreError(t *testing.T) {
 func TestRunInvalidEmailNeverReachesStore(t *testing.T) {
 	st := &fakeStore{roles: map[string]string{}}
 	var out bytes.Buffer
-	if code := Run(context.Background(), st, []string{"not-an-email"}, &out, quiet()); code != 1 {
+	if code := adminseed.Run(context.Background(), st, []string{"not-an-email"}, &out, quiet()); code != 1 {
 		t.Errorf("exit = %d", code)
 	}
 	if len(st.calls) != 0 {
@@ -106,7 +108,7 @@ func TestRunInvalidEmailNeverReachesStore(t *testing.T) {
 
 func TestRunWithoutArgsPrintsUsage(t *testing.T) {
 	var out bytes.Buffer
-	if code := Run(context.Background(), &fakeStore{}, nil, &out, quiet()); code != 2 {
+	if code := adminseed.Run(context.Background(), &fakeStore{}, nil, &out, quiet()); code != 2 {
 		t.Errorf("exit = %d", code)
 	}
 	if !strings.Contains(out.String(), "docker exec -it showcase-api /app/seed") {
@@ -119,7 +121,7 @@ func TestAuditLineDoesNotExposeFullEmail(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, nil))
 	st := &fakeStore{roles: map[string]string{"a@x.com": "Contributor"}}
-	Run(context.Background(), st, []string{"a@x.com"}, io.Discard, log)
+	adminseed.Run(context.Background(), st, []string{"a@x.com"}, io.Discard, log)
 	if !strings.Contains(buf.String(), "admin role granted") {
 		t.Errorf("no audit line: %s", buf.String())
 	}

@@ -129,7 +129,7 @@ Required GitHub Repository Secrets:
 - Modules talk only through service interfaces. `works` uses media through `works/service.MediaStore`, `admin` through `admin/service.CoverURLs`, and media asks `works` about a cover through `media/service.WorkLookup` (bound in `cmd/api/adapters.go`).
 - After a committed admin change the order is: commit, bump `works:version`, delete `work:{id}`, publish the event. Shared Redis keys live in `pkg/cache/keys.go`.
 - Status changes are conditional updates (`409` for the loser of a race). Featuring runs under a Postgres advisory lock and clears the previous mark in the same transaction.
-- Tests: `go test -race ./...` (admin and media service rules, local storage, `pkg/pgarray`).
+- Tests: all of them live in `test/` (see `test/README.md`); run `go test -race ./...` or `go test -race ./test/...`.
 
 1
 ## Monitoring (Prometheus + Grafana + Loki)

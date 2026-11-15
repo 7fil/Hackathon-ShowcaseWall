@@ -1,8 +1,10 @@
-package config
+package config_test
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/config"
 )
 
 // baseEnv is a valid production-like environment; tests override single keys.
@@ -32,7 +34,7 @@ func setEnv(t *testing.T, over map[string]string) {
 func TestLoadAcceptsEachEnvironment(t *testing.T) {
 	for _, env := range []string{"development", "staging", "production"} {
 		setEnv(t, map[string]string{"APP_ENV": env})
-		c, err := Load()
+		c, err := config.Load()
 		if err != nil {
 			t.Fatalf("%s: %v", env, err)
 		}
@@ -44,7 +46,7 @@ func TestLoadAcceptsEachEnvironment(t *testing.T) {
 
 func TestLoadRejectsUnknownEnvironment(t *testing.T) {
 	setEnv(t, map[string]string{"APP_ENV": "prod"})
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "APP_ENV") {
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "APP_ENV") {
 		t.Fatalf("a typo in APP_ENV must fail loudly, got %v", err)
 	}
 }
@@ -52,35 +54,35 @@ func TestLoadRejectsUnknownEnvironment(t *testing.T) {
 func TestDevShortcutsRefusedWhenDeployed(t *testing.T) {
 	for _, env := range []string{"staging", "production"} {
 		setEnv(t, map[string]string{"APP_ENV": env, "DEV_PRINT_OTP": "true"})
-		if _, err := Load(); err == nil {
+		if _, err := config.Load(); err == nil {
 			t.Errorf("%s must refuse DEV_PRINT_OTP=true", env)
 		}
 		setEnv(t, map[string]string{"APP_ENV": env, "RESEND_API_KEY": ""})
-		if _, err := Load(); err == nil {
+		if _, err := config.Load(); err == nil {
 			t.Errorf("%s must require the mail provider", env)
 		}
 	}
 	setEnv(t, map[string]string{"APP_ENV": "development", "DEV_PRINT_OTP": "true", "RESEND_API_KEY": "", "RESEND_FROM": ""})
-	if _, err := Load(); err != nil {
+	if _, err := config.Load(); err != nil {
 		t.Errorf("development may print codes: %v", err)
 	}
 }
 
 func TestProductionRequiresSecureCookie(t *testing.T) {
 	setEnv(t, map[string]string{"COOKIE_SECURE": "false"})
-	if _, err := Load(); err == nil {
+	if _, err := config.Load(); err == nil {
 		t.Fatal("production must refuse COOKIE_SECURE=false")
 	}
 }
 
 func TestLogSettingsValidated(t *testing.T) {
 	setEnv(t, map[string]string{"LOG_LEVEL": "WARN", "LOG_FORMAT": "JSON", "APP_VERSION": "abc"})
-	c, err := Load()
+	c, err := config.Load()
 	if err != nil || c.LogLevel != "warn" || c.LogFormat != "json" || c.Version != "abc" {
 		t.Fatalf("got %+v, %v", c, err)
 	}
 	setEnv(t, map[string]string{"LOG_LEVEL": "verbose"})
-	if _, err := Load(); err == nil {
+	if _, err := config.Load(); err == nil {
 		t.Error("unknown LOG_LEVEL must be rejected")
 	}
 }
@@ -90,11 +92,11 @@ func TestLoadSeedNeedsOnlyDatabase(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	t.Setenv("DATABASE_URL", "postgres://u:p@db/x")
-	if _, err := LoadSeed(); err != nil {
+	if _, err := config.LoadSeed(); err != nil {
 		t.Fatalf("seed must not demand API-only settings: %v", err)
 	}
 	t.Setenv("DATABASE_URL", "")
-	if _, err := LoadSeed(); err == nil {
+	if _, err := config.LoadSeed(); err == nil {
 		t.Fatal("seed must require DATABASE_URL")
 	}
 }

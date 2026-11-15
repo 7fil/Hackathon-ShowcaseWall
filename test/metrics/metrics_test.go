@@ -1,17 +1,19 @@
-package metrics
+package metrics_test
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/metrics"
 )
 
 func TestExpositionHasTypesAndRuntime(t *testing.T) {
-	r := NewRegistry()
-	Default = r
-	IncHTTPRequest("GET", "/api/v1/works", 200)
-	IncHTTPRequest("GET", "/api/v1/works", 500)
-	IncCacheRequest("hit")
-	ObserveHTTPDuration("/api/v1/works", 0.03)
+	r := metrics.NewRegistry()
+	metrics.Default = r
+	metrics.IncHTTPRequest("GET", "/api/v1/works", 200)
+	metrics.IncHTTPRequest("GET", "/api/v1/works", 500)
+	metrics.IncCacheRequest("hit")
+	metrics.ObserveHTTPDuration("/api/v1/works", 0.03)
 
 	var b strings.Builder
 	r.WritePrometheus(&b)
@@ -35,8 +37,8 @@ func TestExpositionHasTypesAndRuntime(t *testing.T) {
 }
 
 func TestPreregisterExposesZeroSeriesBeforeAnyEvent(t *testing.T) {
-	r := NewRegistry()
-	Default = r
+	r := metrics.NewRegistry()
+	metrics.Default = r
 	r.Preregister()
 
 	var b strings.Builder
@@ -54,7 +56,7 @@ func TestPreregisterExposesZeroSeriesBeforeAnyEvent(t *testing.T) {
 		}
 	}
 	// The first real event must continue from the zero series, not start a new one.
-	IncWorksAction("published")
+	metrics.IncWorksAction("published")
 	b.Reset()
 	r.WritePrometheus(&b)
 	if !strings.Contains(b.String(), `works_total{action="published"} 1`) {

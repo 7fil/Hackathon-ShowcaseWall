@@ -1,4 +1,4 @@
-package service
+package works_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
 )
 
@@ -21,46 +22,48 @@ const (
 // ---- fakes -----------------------------------------------------------------
 
 type fakeRepo struct {
-	work  *Work
-	shots []Screenshot
+	work  *service.Work
+	shots []service.Screenshot
 }
 
-func (f *fakeRepo) Create(context.Context, *Work) error                 { return nil }
-func (f *fakeRepo) Update(context.Context, *Work) error                 { return nil }
+func (f *fakeRepo) Create(context.Context, *service.Work) error         { return nil }
+func (f *fakeRepo) Update(context.Context, *service.Work) error         { return nil }
 func (f *fakeRepo) SoftDelete(context.Context, string, time.Time) error { return nil }
-func (f *fakeRepo) ListPublished(context.Context, PublicListFilter, *time.Time, string) ([]*Work, error) {
+func (f *fakeRepo) ListPublished(context.Context, service.PublicListFilter, *time.Time, string) ([]*service.Work, error) {
 	return nil, nil
 }
-func (f *fakeRepo) FindFeatured(context.Context) (*Work, error)          { return nil, ErrNotFound }
-func (f *fakeRepo) ListExhibition(context.Context, int) ([]*Work, error) { return nil, nil }
-func (f *fakeRepo) GetFacets(context.Context) (Facets, error)            { return Facets{}, nil }
-func (f *fakeRepo) ListManaged(context.Context, ManagedListFilter, *time.Time, string) ([]*Work, error) {
+func (f *fakeRepo) FindFeatured(context.Context) (*service.Work, error) {
+	return nil, service.ErrNotFound
+}
+func (f *fakeRepo) ListExhibition(context.Context, int) ([]*service.Work, error) { return nil, nil }
+func (f *fakeRepo) GetFacets(context.Context) (service.Facets, error)            { return service.Facets{}, nil }
+func (f *fakeRepo) ListManaged(context.Context, service.ManagedListFilter, *time.Time, string) ([]*service.Work, error) {
 	return nil, nil
 }
-func (f *fakeRepo) GetSummary(context.Context, string) (DashboardSummary, error) {
-	return DashboardSummary{}, nil
+func (f *fakeRepo) GetSummary(context.Context, string) (service.DashboardSummary, error) {
+	return service.DashboardSummary{}, nil
 }
 
-func (f *fakeRepo) FindByID(_ context.Context, id string) (*Work, error) {
+func (f *fakeRepo) FindByID(_ context.Context, id string) (*service.Work, error) {
 	if f.work == nil || f.work.ID != id {
-		return nil, ErrNotFound
+		return nil, service.ErrNotFound
 	}
 	return f.work, nil
 }
-func (f *fakeRepo) ListScreenshots(context.Context, string) ([]Screenshot, error) {
+func (f *fakeRepo) ListScreenshots(context.Context, string) ([]service.Screenshot, error) {
 	return f.shots, nil
 }
-func (f *fakeRepo) FindScreenshot(_ context.Context, _, imageID string) (*Screenshot, error) {
+func (f *fakeRepo) FindScreenshot(_ context.Context, _, imageID string) (*service.Screenshot, error) {
 	for i := range f.shots {
 		if f.shots[i].ID == imageID {
 			return &f.shots[i], nil
 		}
 	}
-	return nil, ErrScreenshotNotFound
+	return nil, service.ErrScreenshotNotFound
 }
-func (f *fakeRepo) AddScreenshot(_ context.Context, sh *Screenshot, max int) error {
+func (f *fakeRepo) AddScreenshot(_ context.Context, sh *service.Screenshot, max int) error {
 	if len(f.shots) >= max {
-		return ErrScreenshotLimit
+		return service.ErrScreenshotLimit
 	}
 	sh.Position = len(f.shots) + 1
 	f.shots = append(f.shots, *sh)
@@ -73,7 +76,7 @@ func (f *fakeRepo) DeleteScreenshot(_ context.Context, _, imageID string) error 
 			return nil
 		}
 	}
-	return ErrScreenshotNotFound
+	return service.ErrScreenshotNotFound
 }
 
 type fakeMedia struct {
@@ -122,11 +125,11 @@ func (c *fakeCache) GetJSON(context.Context, string, any) (bool, error)        {
 func (c *fakeCache) SetJSON(context.Context, string, any, time.Duration) error { return nil }
 func (c *fakeCache) Delete(context.Context, ...string) error                   { return nil }
 
-func newShotTestSvc(status string) (*Service, *fakeRepo, *fakeMedia, *fakeCache) {
-	repo := &fakeRepo{work: &Work{ID: workUID, OwnerID: ownerID, Status: status, CoverKey: "cover-key"}}
+func newShotTestSvc(status string) (*service.Service, *fakeRepo, *fakeMedia, *fakeCache) {
+	repo := &fakeRepo{work: &service.Work{ID: workUID, OwnerID: ownerID, Status: status, CoverKey: "cover-key"}}
 	media := &fakeMedia{}
 	cache := &fakeCache{}
-	s := New(Deps{
+	s := service.New(service.Deps{
 		Works:  repo,
 		Media:  media,
 		Cache:  cache,
@@ -143,12 +146,12 @@ func asKind(t *testing.T, err error, kind apperr.Kind) {
 	}
 }
 
-var png = &CoverUpload{Data: []byte("png-bytes")}
+var png = &service.CoverUpload{Data: []byte("png-bytes")}
 
 // ---- tests -----------------------------------------------------------------
 
 func TestOwnerAddsScreenshotAndCacheIsInvalidated(t *testing.T) {
-	s, repo, _, cache := newShotTestSvc(StatusDraft)
+	s, repo, _, cache := newShotTestSvc(service.StatusDraft)
 	dto, err := s.AddScreenshot(context.Background(), identity.Identity{UserID: ownerID, Role: identity.RoleContributor}, workUID, png)
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +168,7 @@ func TestOwnerAddsScreenshotAndCacheIsInvalidated(t *testing.T) {
 }
 
 func TestPublishedWorkScreenshotURLIsStable(t *testing.T) {
-	s, _, _, _ := newShotTestSvc(StatusPublished)
+	s, _, _, _ := newShotTestSvc(service.StatusPublished)
 	dto, err := s.AddScreenshot(context.Background(), identity.Identity{UserID: ownerID, Role: identity.RoleContributor}, workUID, png)
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +179,7 @@ func TestPublishedWorkScreenshotURLIsStable(t *testing.T) {
 }
 
 func TestAdminMayAddScreenshotToAnyWork(t *testing.T) {
-	s, _, _, _ := newShotTestSvc(StatusDraft)
+	s, _, _, _ := newShotTestSvc(service.StatusDraft)
 	if _, err := s.AddScreenshot(context.Background(), identity.Identity{UserID: otherID, Role: identity.RoleAdmin}, workUID, png); err != nil {
 		t.Fatalf("admin refused: %v", err)
 	}
@@ -186,7 +189,7 @@ func TestOtherContributorCannotAddOrDelete(t *testing.T) {
 	other := identity.Identity{UserID: otherID, Role: identity.RoleContributor}
 
 	// Draft: the work's existence is hidden (404).
-	s, repo, media, _ := newShotTestSvc(StatusDraft)
+	s, repo, media, _ := newShotTestSvc(service.StatusDraft)
 	_, err := s.AddScreenshot(context.Background(), other, workUID, png)
 	asKind(t, err, apperr.KindNotFound)
 	if len(repo.shots) != 0 || media.puts != 0 {
@@ -194,11 +197,11 @@ func TestOtherContributorCannotAddOrDelete(t *testing.T) {
 	}
 
 	// Published: 403.
-	s, repo, _, _ = newShotTestSvc(StatusPublished)
+	s, repo, _, _ = newShotTestSvc(service.StatusPublished)
 	_, err = s.AddScreenshot(context.Background(), other, workUID, png)
 	asKind(t, err, apperr.KindForbidden)
 
-	repo.shots = []Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "k1"}}
+	repo.shots = []service.Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "k1"}}
 	err = s.DeleteScreenshot(context.Background(), other, workUID, "s1")
 	asKind(t, err, apperr.KindForbidden)
 	if len(repo.shots) != 1 {
@@ -207,24 +210,24 @@ func TestOtherContributorCannotAddOrDelete(t *testing.T) {
 }
 
 func TestNoTokenIdentityIsRefused(t *testing.T) {
-	s, _, _, _ := newShotTestSvc(StatusPublished)
+	s, _, _, _ := newShotTestSvc(service.StatusPublished)
 	if _, err := s.AddScreenshot(context.Background(), identity.Identity{}, workUID, png); err == nil {
 		t.Fatal("an empty identity must be refused")
 	}
 }
 
 func TestScreenshotLimitIsFive(t *testing.T) {
-	s, repo, media, _ := newShotTestSvc(StatusDraft)
+	s, repo, media, _ := newShotTestSvc(service.StatusDraft)
 	owner := identity.Identity{UserID: ownerID, Role: identity.RoleContributor}
-	for i := 0; i < MaxScreenshots; i++ {
+	for i := 0; i < service.MaxScreenshots; i++ {
 		if _, err := s.AddScreenshot(context.Background(), owner, workUID, png); err != nil {
 			t.Fatalf("screenshot %d refused: %v", i+1, err)
 		}
 	}
 	_, err := s.AddScreenshot(context.Background(), owner, workUID, png)
 	asKind(t, err, apperr.KindConflict)
-	if len(repo.shots) != MaxScreenshots {
-		t.Fatalf("want %d screenshots, got %d", MaxScreenshots, len(repo.shots))
+	if len(repo.shots) != service.MaxScreenshots {
+		t.Fatalf("want %d screenshots, got %d", service.MaxScreenshots, len(repo.shots))
 	}
 	s.Close()
 	if len(media.deleted) != 1 {
@@ -233,13 +236,13 @@ func TestScreenshotLimitIsFive(t *testing.T) {
 }
 
 func TestScreenshotImageValidation(t *testing.T) {
-	s, _, _, _ := newShotTestSvc(StatusDraft)
+	s, _, _, _ := newShotTestSvc(service.StatusDraft)
 	owner := identity.Identity{UserID: ownerID, Role: identity.RoleContributor}
 
 	_, err := s.AddScreenshot(context.Background(), owner, workUID, nil)
 	asKind(t, err, apperr.KindValidation)
 
-	_, err = s.AddScreenshot(context.Background(), owner, workUID, &CoverUpload{Data: []byte("bad")})
+	_, err = s.AddScreenshot(context.Background(), owner, workUID, &service.CoverUpload{Data: []byte("bad")})
 	asKind(t, err, apperr.KindValidation)
 	var ae *apperr.Error
 	errors.As(err, &ae)
@@ -249,8 +252,8 @@ func TestScreenshotImageValidation(t *testing.T) {
 }
 
 func TestDeleteScreenshotRemovesRowAndObject(t *testing.T) {
-	s, repo, media, cache := newShotTestSvc(StatusDraft)
-	repo.shots = []Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "works/x/shot-a.png"}}
+	s, repo, media, cache := newShotTestSvc(service.StatusDraft)
+	repo.shots = []service.Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "works/x/shot-a.png"}}
 	owner := identity.Identity{UserID: ownerID, Role: identity.RoleContributor}
 
 	if err := s.DeleteScreenshot(context.Background(), owner, workUID, "s1"); err != nil {
@@ -272,31 +275,31 @@ func TestDeleteScreenshotRemovesRowAndObject(t *testing.T) {
 }
 
 func TestScreenshotInfoReflectsPublishedStatus(t *testing.T) {
-	s, repo, _, _ := newShotTestSvc(StatusPublished)
-	repo.shots = []Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "k1", ContentType: "image/png", SizeBytes: 9}}
+	s, repo, _, _ := newShotTestSvc(service.StatusPublished)
+	repo.shots = []service.Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "k1", ContentType: "image/png", SizeBytes: 9}}
 
 	info, err := s.ScreenshotInfo(context.Background(), workUID, "s1")
 	if err != nil || !info.Published || info.CoverKey != "k1" {
 		t.Fatalf("got %+v, %v", info, err)
 	}
 
-	repo.work.Status = StatusUnpublished
+	repo.work.Status = service.StatusUnpublished
 	info, err = s.ScreenshotInfo(context.Background(), workUID, "s1")
 	if err != nil || info.Published {
 		t.Fatalf("a hidden work's screenshot must not be public: %+v, %v", info, err)
 	}
 
-	if _, err := s.ScreenshotInfo(context.Background(), workUID, "missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ScreenshotInfo(context.Background(), workUID, "missing"); !errors.Is(err, service.ErrNotFound) {
 		t.Fatalf("a missing screenshot must be ErrNotFound, got %v", err)
 	}
-	if _, err := s.ScreenshotInfo(context.Background(), "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "s1"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ScreenshotInfo(context.Background(), "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "s1"); !errors.Is(err, service.ErrNotFound) {
 		t.Fatalf("a missing work must be ErrNotFound, got %v", err)
 	}
 }
 
 func TestPublicDetailListsScreenshotsWithStableURLs(t *testing.T) {
-	s, repo, _, _ := newShotTestSvc(StatusPublished)
-	repo.shots = []Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "k1"}, {ID: "s2", WorkID: workUID, ObjectKey: "k2"}}
+	s, repo, _, _ := newShotTestSvc(service.StatusPublished)
+	repo.shots = []service.Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "k1"}, {ID: "s2", WorkID: workUID, ObjectKey: "k2"}}
 
 	detail, err := s.GetPublishedDetail(context.Background(), workUID)
 	if err != nil {
@@ -308,8 +311,8 @@ func TestPublicDetailListsScreenshotsWithStableURLs(t *testing.T) {
 }
 
 func TestPublicDetailOfDraftIsNotFoundEvenWithScreenshots(t *testing.T) {
-	s, repo, _, _ := newShotTestSvc(StatusDraft)
-	repo.shots = []Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "k1"}}
+	s, repo, _, _ := newShotTestSvc(service.StatusDraft)
+	repo.shots = []service.Screenshot{{ID: "s1", WorkID: workUID, ObjectKey: "k1"}}
 	_, err := s.GetPublishedDetail(context.Background(), workUID)
 	asKind(t, err, apperr.KindNotFound)
 }

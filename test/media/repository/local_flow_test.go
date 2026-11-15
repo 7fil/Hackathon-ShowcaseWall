@@ -1,4 +1,4 @@
-package repository
+package repository_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/repository"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/service"
 )
 
@@ -31,7 +32,7 @@ func (f *flowWorks) LookupCover(context.Context, string) (*service.WorkCover, er
 func TestCoverLifecycleOnLocalDisk(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	disk, err := NewLocalDiskStorage(dir)
+	disk, err := repository.NewLocalDiskStorage(dir)
 	if err != nil {
 		t.Fatal(err)
 	}

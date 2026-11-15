@@ -1,4 +1,4 @@
-package service
+package admin_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/admin/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
 )
@@ -22,30 +23,30 @@ var (
 )
 
 type fakeRepo struct {
-	work   *Work
+	work   *service.Work
 	err    error
 	called []string
-	list   []*Work
-	filter ListFilter
+	list   []*service.Work
+	filter service.ListFilter
 }
 
-func (f *fakeRepo) List(_ context.Context, fl ListFilter, _ *time.Time, _ string) ([]*Work, error) {
+func (f *fakeRepo) List(_ context.Context, fl service.ListFilter, _ *time.Time, _ string) ([]*service.Work, error) {
 	f.filter = fl
 	return f.list, f.err
 }
-func (f *fakeRepo) Summary(context.Context) (DashboardSummary, error) {
+func (f *fakeRepo) Summary(context.Context) (service.DashboardSummary, error) {
 	f.called = append(f.called, "summary")
-	return DashboardSummary{TotalDraft: 1}, f.err
+	return service.DashboardSummary{TotalDraft: 1}, f.err
 }
-func (f *fakeRepo) Publish(context.Context, string, time.Time) (*Work, error) {
+func (f *fakeRepo) Publish(context.Context, string, time.Time) (*service.Work, error) {
 	f.called = append(f.called, "publish")
 	return f.work, f.err
 }
-func (f *fakeRepo) Unpublish(context.Context, string, time.Time) (*Work, error) {
+func (f *fakeRepo) Unpublish(context.Context, string, time.Time) (*service.Work, error) {
 	f.called = append(f.called, "unpublish")
 	return f.work, f.err
 }
-func (f *fakeRepo) SetFeatured(context.Context, string, bool, time.Time) (*Work, error) {
+func (f *fakeRepo) SetFeatured(context.Context, string, bool, time.Time) (*service.Work, error) {
 	f.called = append(f.called, "feature")
 	return f.work, f.err
 }
@@ -73,10 +74,10 @@ func (fakeMedia) CoverURL(id, _ string, published bool) string {
 }
 func (fakeMedia) StableCoverURL(id string) string { return "stable/" + id }
 
-func newSvc(t *testing.T, repo *fakeRepo) (*Service, *order) {
+func newSvc(t *testing.T, repo *fakeRepo) (*service.Service, *order) {
 	t.Helper()
 	o := &order{}
-	s, err := New(Deps{Works: repo, Cache: o, Events: o, Media: fakeMedia{},
+	s, err := service.New(service.Deps{Works: repo, Cache: o, Events: o, Media: fakeMedia{},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	if err != nil {
 		t.Fatal(err)
@@ -84,9 +85,9 @@ func newSvc(t *testing.T, repo *fakeRepo) (*Service, *order) {
 	return s, o
 }
 
-func published() *Work {
+func published() *service.Work {
 	now := time.Now()
-	return &Work{ID: wid, Title: "T", Status: StatusPublished, PublishedAt: &now, TechStack: []string{"Go"}}
+	return &service.Work{ID: wid, Title: "T", Status: service.StatusPublished, PublishedAt: &now, TechStack: []string{"Go"}}
 }
 
 func kind(err error) apperr.Kind { return apperr.As(err).Kind }
@@ -95,7 +96,7 @@ func TestContributorIsRefusedEverywhere(t *testing.T) {
 	repo := &fakeRepo{work: published()}
 	s, o := newSvc(t, repo)
 	ctx := context.Background()
-	_, e1 := s.ListWorks(ctx, contributor, ListFilter{})
+	_, e1 := s.ListWorks(ctx, contributor, service.ListFilter{})
 	_, e2 := s.GetSummary(ctx, contributor)
 	_, e3 := s.Publish(ctx, contributor, wid)
 	_, e4 := s.Unpublish(ctx, contributor, wid)
@@ -127,12 +128,12 @@ func TestPublishOrderAndPayload(t *testing.T) {
 }
 
 func TestPublishConflictAndNotFound(t *testing.T) {
-	repo := &fakeRepo{err: ErrStatusConflict}
+	repo := &fakeRepo{err: service.ErrStatusConflict}
 	s, o := newSvc(t, repo)
 	if _, err := s.Publish(context.Background(), admin, wid); kind(err) != apperr.KindConflict {
 		t.Errorf("want 409, got %v", err)
 	}
-	repo.err = ErrNotFound
+	repo.err = service.ErrNotFound
 	if _, err := s.Publish(context.Background(), admin, wid); kind(err) != apperr.KindNotFound {
 		t.Errorf("want 404, got %v", err)
 	}
@@ -150,7 +151,7 @@ func TestPublishConflictAndNotFound(t *testing.T) {
 
 func TestUnpublishSendsEventAndConflicts(t *testing.T) {
 	w := published()
-	w.Status = StatusUnpublished
+	w.Status = service.StatusUnpublished
 	repo := &fakeRepo{work: w}
 	s, o := newSvc(t, repo)
 	mw, err := s.Unpublish(context.Background(), admin, wid)
@@ -163,7 +164,7 @@ func TestUnpublishSendsEventAndConflicts(t *testing.T) {
 	if mw.CoverURL != "signed/"+wid {
 		t.Errorf("unpublished work needs a signed cover URL, got %q", mw.CoverURL)
 	}
-	repo.err = ErrStatusConflict
+	repo.err = service.ErrStatusConflict
 	if _, err := s.Unpublish(context.Background(), admin, wid); kind(err) != apperr.KindConflict {
 		t.Errorf("want 409, got %v", err)
 	}
@@ -186,7 +187,7 @@ func TestFeatureInvalidatesCacheButSendsNoEvent(t *testing.T) {
 	if len(o.steps) != 2 {
 		t.Errorf("steps = %v, want bump + delete", o.steps)
 	}
-	repo.err = ErrStatusConflict
+	repo.err = service.ErrStatusConflict
 	if _, err := s.SetFeatured(context.Background(), admin, wid, true); kind(err) != apperr.KindConflict {
 		t.Errorf("featuring a non-published work must be 409, got %v", err)
 	}
@@ -196,29 +197,29 @@ func TestListValidationAndPaging(t *testing.T) {
 	repo := &fakeRepo{}
 	s, _ := newSvc(t, repo)
 	ctx := context.Background()
-	if _, err := s.ListWorks(ctx, admin, ListFilter{Status: "Bogus"}); kind(err) != apperr.KindValidation {
+	if _, err := s.ListWorks(ctx, admin, service.ListFilter{Status: "Bogus"}); kind(err) != apperr.KindValidation {
 		t.Errorf("bad status must be 422, got %v", err)
 	}
-	if _, err := s.ListWorks(ctx, admin, ListFilter{Cursor: "%%%"}); kind(err) != apperr.KindInvalid {
+	if _, err := s.ListWorks(ctx, admin, service.ListFilter{Cursor: "%%%"}); kind(err) != apperr.KindInvalid {
 		t.Errorf("bad cursor must be 400, got %v", err)
 	}
 
 	now := time.Now()
 	for i := 0; i < 21; i++ {
-		repo.list = append(repo.list, &Work{ID: wid, Status: StatusDraft, CreatedAt: now})
+		repo.list = append(repo.list, &service.Work{ID: wid, Status: service.StatusDraft, CreatedAt: now})
 	}
-	page, err := s.ListWorks(ctx, admin, ListFilter{Query: "  bagas ", Limit: 500})
+	page, err := s.ListWorks(ctx, admin, service.ListFilter{Query: "  bagas ", Limit: 500})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if repo.filter.Limit != MaxPageLimit+1 || repo.filter.Query != "bagas" {
+	if repo.filter.Limit != service.MaxPageLimit+1 || repo.filter.Query != "bagas" {
 		t.Errorf("filter not normalised: %+v", repo.filter)
 	}
-	if len(page.Items) != MaxPageLimit || page.NextCursor == nil {
-		t.Errorf("want %d items and a next cursor, got %d / %v", MaxPageLimit, len(page.Items), page.NextCursor)
+	if len(page.Items) != service.MaxPageLimit || page.NextCursor == nil {
+		t.Errorf("want %d items and a next cursor, got %d / %v", service.MaxPageLimit, len(page.Items), page.NextCursor)
 	}
 	// The cursor it hands out must be accepted back.
-	if _, err := s.ListWorks(ctx, admin, ListFilter{Cursor: *page.NextCursor}); err != nil {
+	if _, err := s.ListWorks(ctx, admin, service.ListFilter{Cursor: *page.NextCursor}); err != nil {
 		t.Errorf("own cursor rejected: %v", err)
 	}
 }

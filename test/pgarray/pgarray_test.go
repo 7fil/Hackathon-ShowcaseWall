@@ -1,17 +1,19 @@
-package pgarray
+package pgarray_test
 
 import (
 	"reflect"
 	"testing"
+
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/pgarray"
 )
 
 func TestRoundTrip(t *testing.T) {
-	in := StringArray{"Go", `Next.js "app"`, `back\slash`, "a,b", ""}
+	in := pgarray.StringArray{"Go", `Next.js "app"`, `back\slash`, "a,b", ""}
 	v, err := in.Value()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out StringArray
+	var out pgarray.StringArray
 	if err := out.Scan(v); err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +23,7 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestEmptyAndNil(t *testing.T) {
-	var a StringArray
+	var a pgarray.StringArray
 	if v, _ := a.Value(); v != "{}" {
 		t.Errorf("empty value = %v", v)
 	}

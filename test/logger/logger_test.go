@@ -1,4 +1,4 @@
-package logger
+package logger_test
 
 import (
 	"bytes"
@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/logger"
 )
 
 func lines(t *testing.T, buf *bytes.Buffer) []map[string]any {
@@ -26,7 +28,7 @@ func lines(t *testing.T, buf *bytes.Buffer) []map[string]any {
 
 func TestProductionIsJSONInfoWithIdentity(t *testing.T) {
 	var buf bytes.Buffer
-	log := New(Options{Env: EnvProduction, Version: "abc123", Output: &buf})
+	log := logger.New(logger.Options{Env: logger.EnvProduction, Version: "abc123", Output: &buf})
 	log.Debug("hidden")
 	log.Info("hello", "k", "v")
 
@@ -48,7 +50,7 @@ func TestProductionIsJSONInfoWithIdentity(t *testing.T) {
 
 func TestStagingIsJSON(t *testing.T) {
 	var buf bytes.Buffer
-	New(Options{Env: EnvStaging, Output: &buf}).Info("x")
+	logger.New(logger.Options{Env: logger.EnvStaging, Output: &buf}).Info("x")
 	if got := lines(t, &buf); len(got) != 1 || got[0]["env"] != "staging" {
 		t.Fatalf("unexpected output: %s", buf.String())
 	}
@@ -56,7 +58,7 @@ func TestStagingIsJSON(t *testing.T) {
 
 func TestDevelopmentIsTextDebug(t *testing.T) {
 	var buf bytes.Buffer
-	New(Options{Env: EnvDevelopment, Output: &buf}).Debug("dbg")
+	logger.New(logger.Options{Env: logger.EnvDevelopment, Output: &buf}).Debug("dbg")
 	out := buf.String()
 	if !strings.Contains(out, "level=DEBUG") || strings.HasPrefix(out, "{") {
 		t.Fatalf("development should be readable text at debug level, got %q", out)
@@ -65,20 +67,20 @@ func TestDevelopmentIsTextDebug(t *testing.T) {
 
 func TestLevelAndFormatOverrides(t *testing.T) {
 	var buf bytes.Buffer
-	log := New(Options{Env: EnvProduction, Level: "warn", Output: &buf})
+	log := logger.New(logger.Options{Env: logger.EnvProduction, Level: "warn", Output: &buf})
 	log.Info("no")
 	log.Warn("yes")
 	if got := lines(t, &buf); len(got) != 1 || got[0]["msg"] != "yes" {
 		t.Fatalf("LOG_LEVEL=warn not honoured: %s", buf.String())
 	}
-	if ParseLevel("nonsense", slog.LevelInfo) != slog.LevelInfo {
+	if logger.ParseLevel("nonsense", slog.LevelInfo) != slog.LevelInfo {
 		t.Error("unknown level must fall back to the default")
 	}
 }
 
 func TestSecretsAreRedactedByKey(t *testing.T) {
 	var buf bytes.Buffer
-	log := New(Options{Env: EnvProduction, Output: &buf})
+	log := logger.New(logger.Options{Env: logger.EnvProduction, Output: &buf})
 	log.Info("x",
 		"password", "hunter2", "Authorization", "Bearer abc", "refresh_token", "r",
 		"code", "123456", "cookie", "c", "user_id", "u1",
@@ -91,23 +93,23 @@ func TestSecretsAreRedactedByKey(t *testing.T) {
 		}
 	}
 	m := lines(t, &buf)[0]
-	if m["password"] != Redacted || m["user_id"] != "u1" {
+	if m["password"] != logger.Redacted || m["user_id"] != "u1" {
 		t.Errorf("unexpected redaction result: %v", m)
 	}
 }
 
 func TestEmailMasking(t *testing.T) {
 	var buf bytes.Buffer
-	log := New(Options{Env: EnvProduction, Output: &buf})
-	log.Info("x", "email", "alice@example.com", "masked", MaskEmail("bob@example.com"))
+	log := logger.New(logger.Options{Env: logger.EnvProduction, Output: &buf})
+	log.Info("x", "email", "alice@example.com", "masked", logger.MaskEmail("bob@example.com"))
 	m := lines(t, &buf)[0]
 	if m["email"] != "a***@example.com" {
 		t.Errorf("email not masked: %v", m["email"])
 	}
-	if MaskEmail("a***@example.com") != "a***@example.com" {
+	if logger.MaskEmail("a***@example.com") != "a***@example.com" {
 		t.Error("masking must be idempotent")
 	}
-	if MaskEmail("not-an-email") != "***" {
+	if logger.MaskEmail("not-an-email") != "***" {
 		t.Error("non-email input must be fully masked")
 	}
 }

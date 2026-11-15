@@ -1,4 +1,4 @@
-package service
+package service_test
 
 import (
 	"bytes"
@@ -9,10 +9,12 @@ import (
 	"image/png"
 	"io"
 	"log/slog"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
 )
 
@@ -27,7 +29,7 @@ func (m *memStorage) Put(_ context.Context, key string, data []byte, _ string) e
 func (m *memStorage) Get(_ context.Context, key string) (io.ReadCloser, string, int64, error) {
 	b, ok := m.objects[key]
 	if !ok {
-		return nil, "", 0, ErrObjectNotFound
+		return nil, "", 0, service.ErrObjectNotFound
 	}
 	return io.NopCloser(bytes.NewReader(b)), "application/octet-stream", int64(len(b)), nil
 }
@@ -37,26 +39,60 @@ func (m *memStorage) Delete(_ context.Context, key string) error {
 }
 
 type fakeWorks struct {
-	cover *WorkCover
+	cover *service.WorkCover
 	err   error
 }
 
-func (f *fakeWorks) LookupCover(context.Context, string) (*WorkCover, error) { return f.cover, f.err }
+func (f *fakeWorks) LookupCover(context.Context, string) (*service.WorkCover, error) {
+	return f.cover, f.err
+}
 
-func newSvc(t *testing.T, w *fakeWorks, now time.Time) (*Service, *memStorage) {
+func newSvc(t *testing.T, w *fakeWorks, now time.Time) (*service.Service, *memStorage) {
+	t.Helper()
+	clock := now
+	return newSvcWithClock(t, w, &clock)
+}
+
+// newSvcWithClock lets a test move time forward through the exported Deps.Now hook,
+// which is how it checks signature expiry without touching the service's internals.
+func newSvcWithClock(t *testing.T, w *fakeWorks, clock *time.Time) (*service.Service, *memStorage) {
 	t.Helper()
 	st := &memStorage{objects: map[string][]byte{}}
-	s, err := New(Deps{
+	s, err := service.New(service.Deps{
 		Storage:    st,
 		Works:      w,
 		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SignSecret: []byte("0123456789abcdef0123456789abcdef"),
-		Now:        func() time.Time { return now },
+		Now:        func() time.Time { return *clock },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, st
+}
+
+// signedParams returns the exp and sig query values of a signed media URL.
+func signedParams(t *testing.T, rawURL string) (exp, sig string) {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exp, sig = u.Query().Get("exp"), u.Query().Get("sig")
+	if exp == "" || sig == "" {
+		t.Fatalf("signed URL must carry exp and sig, got %q", rawURL)
+	}
+	return exp, sig
+}
+
+// flipLastHexDigit returns sig with its last hex digit changed, so it never equals sig.
+func flipLastHexDigit(sig string) string {
+	last := sig[len(sig)-1]
+	repl := byte('0')
+	if last == '0' {
+		repl = '1'
+	}
+	return sig[:len(sig)-1] + string(repl)
 }
 
 func pngBytes(t *testing.T) []byte {
@@ -108,7 +144,7 @@ func TestCheckImageRejects(t *testing.T) {
 		"empty":          nil,
 		"text file":      []byte("<html>not an image</html>"),
 		"gif":            []byte("GIF89a\x01\x00\x01\x00\x00\x00\x00;"),
-		"oversize":       append(pngBytes(t), make([]byte, MaxImageBytes)...),
+		"oversize":       append(pngBytes(t), make([]byte, service.MaxImageBytes)...),
 		"truncated png":  pngBytes(t)[:20],
 		"bad webp chunk": append([]byte("RIFF\x10\x00\x00\x00WEBPXXXX"), make([]byte, 8)...),
 	}
@@ -140,35 +176,45 @@ func TestPutCoverKey(t *testing.T) {
 }
 
 func TestSignedURLVerification(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-	s, _ := newSvc(t, &fakeWorks{}, now)
-	url := s.SignedCoverURL(workID, "works/k/cover.png")
-	q := url[strings.Index(url, "?")+1:]
-	var exp, sig string
-	for _, kv := range strings.Split(q, "&") {
-		k, v, _ := strings.Cut(kv, "=")
-		if k == "exp" {
-			exp = v
-		} else if k == "sig" {
-			sig = v
+	clock := time.Unix(1_800_000_000, 0)
+	works := &fakeWorks{cover: &service.WorkCover{CoverKey: "works/k/cover.png", ContentType: "image/png"}}
+	s, st := newSvcWithClock(t, works, &clock)
+	st.objects["works/k/cover.png"] = []byte("PNGDATA")
+	st.objects["works/other/cover.png"] = []byte("OTHER")
+
+	// opens reports whether the (not published) cover can be fetched with this signature.
+	opens := func(id, exp, sig string) bool {
+		stream, err := s.StreamCover(context.Background(), id, exp, sig)
+		if err != nil {
+			return false
 		}
+		stream.Body.Close()
+		return true
 	}
-	if !s.verify(workID, "works/k/cover.png", exp, sig) {
+
+	exp, sig := signedParams(t, s.SignedCoverURL(workID, "works/k/cover.png"))
+	if !opens(workID, exp, sig) {
 		t.Fatal("fresh signature must verify")
 	}
-	if s.verify(workID, "works/other/cover.png", exp, sig) {
-		t.Error("signature for another key must fail (cover replaced)")
-	}
-	if s.verify(workID, "works/k/cover.png", exp, sig[:len(sig)-1]+"0") && sig[len(sig)-1] != '0' {
+	if opens(workID, exp, flipLastHexDigit(sig)) {
 		t.Error("altered signature must fail")
 	}
-	if s.verify("99999999-2222-4333-8444-555555555555", "works/k/cover.png", exp, sig) {
+	if opens("99999999-2222-4333-8444-555555555555", exp, sig) {
 		t.Error("signature for another work must fail")
 	}
-	s.d.Now = func() time.Time { return now.Add(SignedURLTTL + time.Second) }
-	if s.verify(workID, "works/k/cover.png", exp, sig) {
+
+	// The cover was replaced after the URL was issued: the old signature is bound to the old key.
+	works.cover = &service.WorkCover{CoverKey: "works/other/cover.png", ContentType: "image/png"}
+	if opens(workID, exp, sig) {
+		t.Error("signature for another key must fail (cover replaced)")
+	}
+	works.cover = &service.WorkCover{CoverKey: "works/k/cover.png", ContentType: "image/png"}
+
+	clock = clock.Add(service.SignedURLTTL + time.Second)
+	if opens(workID, exp, sig) {
 		t.Error("expired signature must fail")
 	}
+
 	if s.StableCoverURL(workID) != "/api/v1/media/works/"+workID+"/cover" {
 		t.Error("stable URL changed")
 	}
@@ -178,9 +224,9 @@ func TestSignedURLVerification(t *testing.T) {
 }
 
 func TestStreamCover(t *testing.T) {
-	now := time.Unix(1_800_000_000, 0)
-	works := &fakeWorks{cover: &WorkCover{CoverKey: "works/k/cover.png", ContentType: "image/png", Published: true}}
-	s, st := newSvc(t, works, now)
+	clock := time.Unix(1_800_000_000, 0)
+	works := &fakeWorks{cover: &service.WorkCover{CoverKey: "works/k/cover.png", ContentType: "image/png", Published: true}}
+	s, st := newSvcWithClock(t, works, &clock)
 	st.objects["works/k/cover.png"] = []byte("PNGDATA")
 	ctx := context.Background()
 
@@ -195,7 +241,7 @@ func TestStreamCover(t *testing.T) {
 	}
 
 	// Hidden: the same request now answers 404.
-	works.cover = &WorkCover{CoverKey: "works/k/cover.png", ContentType: "image/png", Published: false}
+	works.cover = &service.WorkCover{CoverKey: "works/k/cover.png", ContentType: "image/png", Published: false}
 	assertNotFound(t, s, workID, "", "")
 
 	// Hidden with a valid signature: owner or Admin may see it.
@@ -214,16 +260,16 @@ func TestStreamCover(t *testing.T) {
 
 	// Tampered, expired and missing signatures are refused.
 	assertNotFound(t, s, workID, exp, sig[:len(sig)-2]+"00")
-	s.d.Now = func() time.Time { return now.Add(time.Hour) }
+	clock = clock.Add(time.Hour)
 	assertNotFound(t, s, workID, exp, sig)
-	s.d.Now = func() time.Time { return now }
+	clock = clock.Add(-time.Hour)
 
 	// Deleted work, malformed id, missing object.
-	works.err = ErrWorkNotFound
+	works.err = service.ErrWorkNotFound
 	assertNotFound(t, s, workID, "", "")
 	works.err = nil
 	assertNotFound(t, s, "not-a-uuid", "", "")
-	works.cover = &WorkCover{CoverKey: "works/gone.png", Published: true}
+	works.cover = &service.WorkCover{CoverKey: "works/gone.png", Published: true}
 	assertNotFound(t, s, workID, "", "")
 
 	// A lookup failure is an internal error, not a 404.
@@ -233,7 +279,7 @@ func TestStreamCover(t *testing.T) {
 	}
 }
 
-func assertNotFound(t *testing.T, s *Service, id, exp, sig string) {
+func assertNotFound(t *testing.T, s *service.Service, id, exp, sig string) {
 	t.Helper()
 	_, err := s.StreamCover(context.Background(), id, exp, sig)
 	if err == nil || apperr.As(err).Kind != apperr.KindNotFound {

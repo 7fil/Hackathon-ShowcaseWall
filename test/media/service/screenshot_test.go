@@ -1,4 +1,4 @@
-package service
+package service_test
 
 import (
 	"context"
@@ -7,22 +7,30 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/service"
 )
 
 const imageID = "99999999-8888-4777-8666-555555555555"
 
 type fakeShots struct {
-	shot *WorkCover
+	shot *service.WorkCover
 	err  error
 }
 
-func (f *fakeShots) LookupScreenshot(context.Context, string, string) (*WorkCover, error) {
+func (f *fakeShots) LookupScreenshot(context.Context, string, string) (*service.WorkCover, error) {
 	return f.shot, f.err
 }
 
-func newShotSvc(t *testing.T, shots *fakeShots, now time.Time) (*Service, *memStorage) {
+func newShotSvc(t *testing.T, shots *fakeShots, now time.Time) (*service.Service, *memStorage) {
 	t.Helper()
-	s, st := newSvc(t, &fakeWorks{}, now)
+	clock := now
+	return newShotSvcWithClock(t, shots, &clock)
+}
+
+func newShotSvcWithClock(t *testing.T, shots *fakeShots, clock *time.Time) (*service.Service, *memStorage) {
+	t.Helper()
+	s, st := newSvcWithClock(t, &fakeWorks{}, clock)
 	s.SetScreenshotLookup(shots)
 	return s, st
 }
@@ -60,7 +68,7 @@ func TestScreenshotURLStableForPublishedSignedOtherwise(t *testing.T) {
 }
 
 func TestStreamScreenshotPublishedNeedsNoSignature(t *testing.T) {
-	shots := &fakeShots{shot: &WorkCover{CoverKey: "works/x/shot-a.png", ContentType: "image/png", Published: true}}
+	shots := &fakeShots{shot: &service.WorkCover{CoverKey: "works/x/shot-a.png", ContentType: "image/png", Published: true}}
 	s, st := newShotSvc(t, shots, time.Now())
 	st.objects["works/x/shot-a.png"] = []byte("img")
 
@@ -76,42 +84,50 @@ func TestStreamScreenshotPublishedNeedsNoSignature(t *testing.T) {
 }
 
 func TestStreamScreenshotNotPublishedRules(t *testing.T) {
-	now := time.Now()
-	shots := &fakeShots{shot: &WorkCover{CoverKey: "works/x/shot-a.png", ContentType: "image/png", Published: false}}
-	s, st := newShotSvc(t, shots, now)
-	st.objects["works/x/shot-a.png"] = []byte("img")
+	const key = "works/x/shot-a.png"
+	clock := time.Now()
+	shots := &fakeShots{shot: &service.WorkCover{CoverKey: key, ContentType: "image/png", Published: false}}
+	s, st := newShotSvcWithClock(t, shots, &clock)
+	st.objects[key] = []byte("img")
+
+	opens := func(exp, sig string) bool {
+		stream, err := s.StreamScreenshot(context.Background(), workID, imageID, exp, sig)
+		if err != nil {
+			return false
+		}
+		stream.Body.Close()
+		return true
+	}
 
 	// No signature: refused as 404 so the work's existence is not revealed.
-	if _, err := s.StreamScreenshot(context.Background(), workID, imageID, "", ""); err == nil {
+	if opens("", "") {
 		t.Fatal("expected refusal without a signature")
 	}
 
 	// A valid signature works.
-	exp := now.Add(time.Minute).Unix()
-	sig := s.signScreenshot(workID, imageID, "works/x/shot-a.png", exp)
-	expStr := formatInt(exp)
-	stream, err := s.StreamScreenshot(context.Background(), workID, imageID, expStr, sig)
-	if err != nil {
-		t.Fatalf("valid signature refused: %v", err)
+	exp, sig := signedParams(t, s.ScreenshotURL(workID, imageID, key, false))
+	if !opens(exp, sig) {
+		t.Fatal("valid signature refused")
 	}
-	stream.Body.Close()
 
-	// Expired, altered, and a cover signature reused for a screenshot are all refused.
-	expired := now.Add(-time.Minute).Unix()
-	if _, err := s.StreamScreenshot(context.Background(), workID, imageID, formatInt(expired), s.signScreenshot(workID, imageID, "works/x/shot-a.png", expired)); err == nil {
-		t.Fatal("expired signature must be refused")
-	}
-	if _, err := s.StreamScreenshot(context.Background(), workID, imageID, expStr, sig[:len(sig)-2]+"00"); err == nil {
+	// Altered, and a cover signature reused for a screenshot, are refused.
+	if opens(exp, flipLastHexDigit(sig)) {
 		t.Fatal("altered signature must be refused")
 	}
-	coverSig := s.sign(workID, "works/x/shot-a.png", exp)
-	if _, err := s.StreamScreenshot(context.Background(), workID, imageID, expStr, coverSig); err == nil {
+	coverExp, coverSig := signedParams(t, s.SignedCoverURL(workID, key))
+	if opens(coverExp, coverSig) {
 		t.Fatal("a cover signature must not open a screenshot")
+	}
+
+	// Once the clock passes the signature's lifetime it is refused as well.
+	clock = clock.Add(service.SignedURLTTL + time.Second)
+	if opens(exp, sig) {
+		t.Fatal("expired signature must be refused")
 	}
 }
 
 func TestStreamScreenshotMissingOrMalformed(t *testing.T) {
-	shots := &fakeShots{err: ErrWorkNotFound}
+	shots := &fakeShots{err: service.ErrWorkNotFound}
 	s, _ := newShotSvc(t, shots, time.Now())
 	if _, err := s.StreamScreenshot(context.Background(), workID, imageID, "", ""); err == nil {
 		t.Fatal("a missing screenshot must be 404")
@@ -124,20 +140,7 @@ func TestStreamScreenshotMissingOrMalformed(t *testing.T) {
 	}
 
 	unbound, _ := newSvc(t, &fakeWorks{}, time.Now())
-	if _, err := unbound.StreamScreenshot(context.Background(), workID, imageID, "", ""); err == nil || errors.Is(err, ErrWorkNotFound) {
+	if _, err := unbound.StreamScreenshot(context.Background(), workID, imageID, "", ""); err == nil || errors.Is(err, service.ErrWorkNotFound) {
 		t.Fatal("an unbound lookup must be an internal error")
 	}
-}
-
-func formatInt(n int64) string {
-	const digits = "0123456789"
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{digits[n%10]}, b...)
-		n /= 10
-	}
-	return string(b)
 }

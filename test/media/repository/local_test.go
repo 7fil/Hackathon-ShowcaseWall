@@ -1,4 +1,4 @@
-package repository
+package repository_test
 
 import (
 	"context"
@@ -8,12 +8,13 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/repository"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/service"
 )
 
 func TestLocalStorage(t *testing.T) {
 	dir := t.TempDir()
-	st, err := NewLocalDiskStorage(dir)
+	st, err := repository.NewLocalDiskStorage(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +45,7 @@ func TestLocalStorage(t *testing.T) {
 func TestLocalStorageCannotEscapeBaseDir(t *testing.T) {
 	parent := t.TempDir()
 	base := filepath.Join(parent, "media")
-	st, err := NewLocalDiskStorage(base)
+	st, err := repository.NewLocalDiskStorage(base)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,7 @@ func TestLocalStorageCannotEscapeBaseDir(t *testing.T) {
 
 func TestLocalStorageOverwriteIsAtomicAndLeavesNoTempFiles(t *testing.T) {
 	dir := t.TempDir()
-	st, err := NewLocalDiskStorage(dir)
+	st, err := repository.NewLocalDiskStorage(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +93,7 @@ func TestLocalStorageOverwriteIsAtomicAndLeavesNoTempFiles(t *testing.T) {
 }
 
 func TestLocalStorageContentTypeFromExtension(t *testing.T) {
-	st, _ := NewLocalDiskStorage(t.TempDir())
+	st, _ := repository.NewLocalDiskStorage(t.TempDir())
 	ctx := context.Background()
 	for key, want := range map[string]string{
 		"w/a.jpg": "image/jpeg", "w/a.png": "image/png", "w/a.webp": "image/webp", "w/a.bin": "application/octet-stream",
@@ -112,7 +113,7 @@ func TestLocalStorageContentTypeFromExtension(t *testing.T) {
 }
 
 func TestLocalStorageDirectoryKeyIsNotAnObject(t *testing.T) {
-	st, _ := NewLocalDiskStorage(t.TempDir())
+	st, _ := repository.NewLocalDiskStorage(t.TempDir())
 	ctx := context.Background()
 	_ = st.Put(ctx, "works/a/cover.png", []byte("x"), "")
 	if _, _, _, err := st.Get(ctx, "works/a"); !errors.Is(err, service.ErrObjectNotFound) {
@@ -122,7 +123,7 @@ func TestLocalStorageDirectoryKeyIsNotAnObject(t *testing.T) {
 
 func TestLocalStorageDeleteRemovesEmptyFoldersButKeepsBase(t *testing.T) {
 	dir := t.TempDir()
-	st, _ := NewLocalDiskStorage(dir)
+	st, _ := repository.NewLocalDiskStorage(dir)
 	ctx := context.Background()
 	_ = st.Put(ctx, "works/a/cover-1.png", []byte("x"), "")
 	_ = st.Put(ctx, "works/a/cover-2.png", []byte("y"), "")
@@ -140,12 +141,12 @@ func TestLocalStorageDeleteRemovesEmptyFoldersButKeepsBase(t *testing.T) {
 }
 
 func TestNewLocalDiskStorageFailsEarlyOnBadDir(t *testing.T) {
-	if _, err := NewLocalDiskStorage(""); err == nil {
+	if _, err := repository.NewLocalDiskStorage(""); err == nil {
 		t.Error("empty dir must be refused")
 	}
 	file := filepath.Join(t.TempDir(), "afile")
 	_ = os.WriteFile(file, []byte("x"), 0o644)
-	if _, err := NewLocalDiskStorage(filepath.Join(file, "sub")); err == nil {
+	if _, err := repository.NewLocalDiskStorage(filepath.Join(file, "sub")); err == nil {
 		t.Error("a dir under a regular file must fail at startup")
 	}
 }
