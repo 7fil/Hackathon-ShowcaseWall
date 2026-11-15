@@ -33,12 +33,8 @@ type Config struct {
 	FirebaseCredentialsJSON string
 	FirebaseCredentialsFile string
 
-	MinioEndpoint  string
-	MinioAccessKey string
-	MinioSecretKey string
-	MinioBucket    string
-	MinioUseSSL    bool
-	MediaLocalDir  string
+	// MediaLocalDir is where cover images are stored on disk.
+	MediaLocalDir string
 }
 
 func (c Config) IsProduction() bool { return c.Env == "production" }
@@ -93,11 +89,7 @@ func parse() (Config, error) {
 		FirebaseCredentialsJSON: strings.TrimSpace(os.Getenv("FIREBASE_CREDENTIALS_JSON")),
 		FirebaseCredentialsFile: strings.TrimSpace(os.Getenv("FIREBASE_CREDENTIALS_FILE")),
 
-		MinioEndpoint:  strings.TrimSpace(os.Getenv("MINIO_ENDPOINT")),
-		MinioAccessKey: get("MINIO_ACCESS_KEY", "minioadmin"),
-		MinioSecretKey: get("MINIO_SECRET_KEY", "minioadmin"),
-		MinioBucket:    get("MINIO_BUCKET", "showcase-works"),
-		MediaLocalDir:  get("MEDIA_LOCAL_DIR", "/tmp/showcase-media"),
+		MediaLocalDir: get("MEDIA_LOCAL_DIR", "./data/media"),
 	}
 	c.AdminEmails = splitEmails(os.Getenv("ADMIN_EMAILS"))
 	if c.AdminEmail != "" {
@@ -108,9 +100,6 @@ func parse() (Config, error) {
 		return c, err
 	}
 	if c.DevPrintOTP, err = boolEnv("DEV_PRINT_OTP", false); err != nil {
-		return c, err
-	}
-	if c.MinioUseSSL, err = boolEnv("MINIO_USE_SSL", false); err != nil {
 		return c, err
 	}
 	switch strings.ToLower(get("COOKIE_SAMESITE", "lax")) {

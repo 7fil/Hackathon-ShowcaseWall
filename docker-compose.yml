@@ -17,10 +17,9 @@ services:
       METRICS_PORT: "9100"
       DATABASE_URL: postgres://${POSTGRES_USER:-showcase}:${POSTGRES_PASSWORD:-showcase}@postgres:5432/${POSTGRES_DB:-showcase}?sslmode=disable
       REDIS_URL: redis://redis:6379/0
-      MINIO_ENDPOINT: ""
-      MEDIA_LOCAL_DIR: "/tmp/showcase-media"
+      MEDIA_LOCAL_DIR: /data/media
     volumes:
-      - mediadata:/tmp/showcase-media
+      - mediadata:/data/media
     depends_on:
       postgres:
         condition: service_healthy

@@ -81,7 +81,7 @@ Required GitHub Repository Secrets:
 | Module | Path | Owns |
 | :--- | :--- | :--- |
 | `admin` | `internal/admin/{handler,service,repository}` | `GET /admin/works`, `GET /admin/summary`, `POST /admin/works/:id/publish`, `POST /admin/works/:id/unpublish`, `PATCH /admin/works/:id/feature` |
-| `media` | `internal/media/{handler,service,repository}` | `GET /media/works/:id/cover`, image checks (JPEG/PNG/WebP by content, 5 MB), random object keys, stable and signed URLs, MinIO / local-disk storage |
+| `media` | `internal/media/{handler,service,repository}` | `GET /media/works/:id/cover`, image checks (JPEG/PNG/WebP by content, 5 MB), random object keys, stable and signed URLs, local-disk object storage (`MEDIA_LOCAL_DIR`) |
 
 - Modules talk only through service interfaces. `works` uses media through `works/service.MediaStore`, `admin` through `admin/service.CoverURLs`, and media asks `works` about a cover through `media/service.WorkLookup` (bound in `cmd/api/adapters.go`).
 - After a committed admin change the order is: commit, bump `works:version`, delete `work:{id}`, publish the event. Shared Redis keys live in `pkg/cache/keys.go`.

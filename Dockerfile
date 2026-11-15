@@ -25,13 +25,14 @@ WORKDIR /app
 COPY --from=builder /out/api /app/api
 COPY --from=builder /out/seed /app/seed
 
-RUN mkdir -p /app/secrets && chown -R appuser:appgroup /app
+RUN mkdir -p /app/secrets /data/media && chown -R appuser:appgroup /app /data
 
 USER appuser
 
 ENV APP_ENV=production \
     PORT=8080 \
-    METRICS_PORT=9100
+    METRICS_PORT=9100 \
+    MEDIA_LOCAL_DIR=/data/media
 
 EXPOSE 8080 9100
 

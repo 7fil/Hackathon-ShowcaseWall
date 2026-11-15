@@ -107,21 +107,11 @@ func run() error {
 	r.Use(middleware.RequestID(), middleware.AccessLog(log), middleware.Recovery(log), middleware.CORS(cfg.FrontendOrigin))
 
 	// ---- media: object storage + image rules --------------------------------
-	var storage mediasvc.ObjectStorage
-	if cfg.MinioEndpoint != "" {
-		s3Store, err := mediarepo.NewS3Storage(ctx, cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey, cfg.MinioBucket, cfg.MinioUseSSL)
-		if err != nil {
-			return err
-		}
-		storage = s3Store
-	} else {
-		log.Warn("MINIO_ENDPOINT not set: using local disk storage for covers", "dir", cfg.MediaLocalDir)
-		localStore, err := mediarepo.NewLocalDiskStorage(cfg.MediaLocalDir)
-		if err != nil {
-			return err
-		}
-		storage = localStore
+	storage, err := mediarepo.NewLocalDiskStorage(cfg.MediaLocalDir)
+	if err != nil {
+		return err
 	}
+	log.Info("object storage: local disk", "dir", cfg.MediaLocalDir)
 	mediaService, err := mediasvc.New(mediasvc.Deps{
 		Storage:    storage,
 		Logger:     log,

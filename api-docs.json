@@ -1961,7 +1961,7 @@
           "Works (Contributor & Owner)"
         ],
         "summary": "Delete Work (Owner or Admin)",
-        "description": "Soft-deletes the work, removes media from MinIO in the background, and broadcasts `work.deleted` on `/ws/wall` if the work was `Published`.",
+        "description": "Soft-deletes the work, removes media from disk in the background, and broadcasts `work.deleted` on `/ws/wall` if the work was `Published`.",
         "operationId": "deleteWork",
         "security": [
           {
@@ -2025,7 +2025,7 @@
           "Media"
         ],
         "summary": "Stream Published Work Cover Image",
-        "description": "Streams the cover image of a `Published` work from MinIO. Returns `404` immediately if the work is hidden or deleted.",
+        "description": "Streams the cover image of a `Published` work from disk. Returns `404` immediately if the work is hidden or deleted.",
         "operationId": "getPublishedWorkCover",
         "parameters": [
           {

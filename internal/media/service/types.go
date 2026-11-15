@@ -25,7 +25,7 @@ var (
 	ErrWorkNotFound = errors.New("work not found")
 )
 
-// ObjectStorage is the private object store (MinIO). Implementations live in the
+// ObjectStorage is the private object store (local disk). Implementations live in the
 // repository layer and are the only code that talks to the store.
 type ObjectStorage interface {
 	Put(ctx context.Context, key string, data []byte, contentType string) error
