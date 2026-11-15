@@ -6,9 +6,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/apperr"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform/logger"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/logger"
 )
 
 // OAuthLogin signs a user in (or up) with a Firebase ID token. The provider has

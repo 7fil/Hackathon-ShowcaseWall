@@ -9,9 +9,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/apperr"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/service"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform/httpx"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/middleware"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/response"
 )
 
 const (
@@ -42,17 +43,17 @@ func New(svc *service.Service, cookie CookieConfig, frontendOrigin string) *Hand
 }
 
 // Routes mounts the auth routes and /me on the /api/v1 group.
-func (h *Handler) Routes(v1 *gin.RouterGroup, limiter httpx.Limiter, log *slog.Logger, requireAuth gin.HandlerFunc) {
-	body := httpx.BodyLimit(maxBodyBytes)
-	origin := httpx.RequireOrigin(h.frontendOrigin)
+func (h *Handler) Routes(v1 *gin.RouterGroup, limiter middleware.Limiter, log *slog.Logger, requireAuth gin.HandlerFunc) {
+	body := middleware.BodyLimit(maxBodyBytes)
+	origin := middleware.RequireOrigin(h.frontendOrigin)
 
 	a := v1.Group("/auth")
-	a.POST("/register", body, httpx.RateLimitIP(limiter, log, "register", ipLimit, ipWindow), h.register)
-	a.POST("/login", body, httpx.RateLimitIP(limiter, log, "login", ipLimit, ipWindow), h.login)
-	code := httpx.RateLimitIP(limiter, log, "code", ipLimit, ipWindow) // verify and resend share one budget
+	a.POST("/register", body, middleware.RateLimitIP(limiter, log, "register", ipLimit, ipWindow), h.register)
+	a.POST("/login", body, middleware.RateLimitIP(limiter, log, "login", ipLimit, ipWindow), h.login)
+	code := middleware.RateLimitIP(limiter, log, "code", ipLimit, ipWindow) // verify and resend share one budget
 	a.POST("/otp/verify", body, code, h.verify)
 	a.POST("/otp/resend", body, code, h.resend)
-	a.POST("/oauth/firebase", body, httpx.RateLimitIP(limiter, log, "oauth", ipLimit, ipWindow), h.oauthFirebase)
+	a.POST("/oauth/firebase", body, middleware.RateLimitIP(limiter, log, "oauth", ipLimit, ipWindow), h.oauthFirebase)
 	a.POST("/refresh", origin, h.refresh)
 	a.POST("/logout", origin, requireAuth, h.logout)
 
@@ -101,7 +102,7 @@ type oauthRequest struct {
 var codeSent = gin.H{"status": "code_sent"}
 
 func badJSON(c *gin.Context) {
-	httpx.Fail(c, apperr.New(apperr.KindInvalid, "invalid_json", "Body permintaan tidak valid"))
+	response.Fail(c, apperr.New(apperr.KindInvalid, "invalid_json", "Body permintaan tidak valid"))
 }
 
 // ---- Handlers ----
@@ -113,10 +114,10 @@ func (h *Handler) register(c *gin.Context) {
 		return
 	}
 	if err := h.svc.Register(c.Request.Context(), service.RegisterInput{Name: req.Name, Email: req.Email, Password: req.Password}); err != nil {
-		httpx.Fail(c, err)
+		response.Fail(c, err)
 		return
 	}
-	httpx.OK(c, http.StatusAccepted, codeSent)
+	response.OK(c, http.StatusAccepted, codeSent)
 }
 
 func (h *Handler) login(c *gin.Context) {
@@ -126,10 +127,10 @@ func (h *Handler) login(c *gin.Context) {
 		return
 	}
 	if err := h.svc.Login(c.Request.Context(), service.LoginInput{Email: req.Email, Password: req.Password}, c.ClientIP()); err != nil {
-		httpx.Fail(c, err)
+		response.Fail(c, err)
 		return
 	}
-	httpx.OK(c, http.StatusAccepted, codeSent)
+	response.OK(c, http.StatusAccepted, codeSent)
 }
 
 func (h *Handler) verify(c *gin.Context) {
@@ -140,11 +141,11 @@ func (h *Handler) verify(c *gin.Context) {
 	}
 	res, err := h.svc.VerifyOTP(c.Request.Context(), service.VerifyInput{Email: req.Email, Code: req.Code, Purpose: req.Purpose}, c.ClientIP())
 	if err != nil {
-		httpx.Fail(c, err)
+		response.Fail(c, err)
 		return
 	}
 	h.setRefreshCookie(c, res.RefreshToken, res.RefreshExpiresAt)
-	httpx.OK(c, http.StatusOK, gin.H{"access_token": res.AccessToken, "user": toUserDTO(res.User)})
+	response.OK(c, http.StatusOK, gin.H{"access_token": res.AccessToken, "user": toUserDTO(res.User)})
 }
 
 // oauthFirebase exchanges a Firebase ID token for this API's own session (no email code).
@@ -156,11 +157,11 @@ func (h *Handler) oauthFirebase(c *gin.Context) {
 	}
 	res, err := h.svc.OAuthLogin(c.Request.Context(), service.OAuthInput{IDToken: req.IDToken}, c.ClientIP())
 	if err != nil {
-		httpx.Fail(c, err)
+		response.Fail(c, err)
 		return
 	}
 	h.setRefreshCookie(c, res.RefreshToken, res.RefreshExpiresAt)
-	httpx.OK(c, http.StatusOK, gin.H{"access_token": res.AccessToken, "user": toUserDTO(res.User)})
+	response.OK(c, http.StatusOK, gin.H{"access_token": res.AccessToken, "user": toUserDTO(res.User)})
 }
 
 func (h *Handler) resend(c *gin.Context) {
@@ -170,10 +171,10 @@ func (h *Handler) resend(c *gin.Context) {
 		return
 	}
 	if err := h.svc.ResendOTP(c.Request.Context(), service.ResendInput{Email: req.Email, Purpose: req.Purpose}); err != nil {
-		httpx.Fail(c, err)
+		response.Fail(c, err)
 		return
 	}
-	httpx.OK(c, http.StatusAccepted, codeSent)
+	response.OK(c, http.StatusAccepted, codeSent)
 }
 
 func (h *Handler) refresh(c *gin.Context) {
@@ -183,32 +184,32 @@ func (h *Handler) refresh(c *gin.Context) {
 		if apperr.As(err).Kind == apperr.KindUnauthorized {
 			h.clearRefreshCookie(c) // drop a dead cookie so the client stops sending it
 		}
-		httpx.Fail(c, err)
+		response.Fail(c, err)
 		return
 	}
 	h.setRefreshCookie(c, res.RefreshToken, res.RefreshExpiresAt)
-	httpx.OK(c, http.StatusOK, gin.H{"access_token": res.AccessToken})
+	response.OK(c, http.StatusOK, gin.H{"access_token": res.AccessToken})
 }
 
 func (h *Handler) logout(c *gin.Context) {
-	id, _ := httpx.IdentityFrom(c)
+	id, _ := middleware.IdentityFrom(c)
 	raw, _ := c.Cookie(refreshCookieName)
 	if err := h.svc.Logout(c.Request.Context(), id.UserID, raw); err != nil {
-		httpx.Fail(c, err)
+		response.Fail(c, err)
 		return
 	}
 	h.clearRefreshCookie(c)
-	httpx.NoContent(c)
+	response.NoContent(c)
 }
 
 func (h *Handler) me(c *gin.Context) {
-	id, _ := httpx.IdentityFrom(c)
+	id, _ := middleware.IdentityFrom(c)
 	u, err := h.svc.Me(c.Request.Context(), id.UserID)
 	if err != nil {
-		httpx.Fail(c, err)
+		response.Fail(c, err)
 		return
 	}
-	httpx.OK(c, http.StatusOK, toUserDTO(u))
+	response.OK(c, http.StatusOK, toUserDTO(u))
 }
 
 // ---- Cookie ----

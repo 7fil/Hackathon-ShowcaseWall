@@ -16,11 +16,12 @@ import (
 	authrepo "github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/repository"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/security"
 	authsvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/service"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform/cache"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform/config"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform/database"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform/httpx"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform/logger"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/middleware"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/cache"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/config"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/database"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/logger"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/response"
 )
 
 func main() {
@@ -105,13 +106,13 @@ func run() error {
 	if err := r.SetTrustedProxies(cfg.TrustedProxies); err != nil {
 		return err
 	}
-	r.Use(httpx.RequestID(), httpx.AccessLog(log), httpx.Recovery(log), httpx.CORS(cfg.FrontendOrigin))
+	r.Use(middleware.RequestID(), middleware.AccessLog(log), middleware.Recovery(log), middleware.CORS(cfg.FrontendOrigin))
 
-	r.GET("/health", func(c *gin.Context) { httpx.OK(c, http.StatusOK, gin.H{"status": "ok"}) })
+	r.GET("/health", func(c *gin.Context) { response.OK(c, http.StatusOK, gin.H{"status": "ok"}) })
 
 	v1 := r.Group("/api/v1")
 	authhandler.New(svc, authhandler.CookieConfig{Secure: cfg.CookieSecure, SameSite: cfg.CookieSameSite}, cfg.FrontendOrigin).
-		Routes(v1, limiter, log, httpx.Auth(svc))
+		Routes(v1, limiter, log, middleware.Auth(svc))
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

@@ -1,5 +1,5 @@
-// Package httpx holds shared Gin helpers: response envelope, error mapping and middleware.
-package httpx
+// Package response holds the shared JSON envelope and error mapping for handlers.
+package response
 
 import (
 	"log/slog"
@@ -9,8 +9,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/apperr"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
 )
+
+// CtxRequestID is the Gin context key the request-ID middleware writes to.
+const CtxRequestID = "request_id"
+
+// RequestID returns the current request's ID, or "" if none was assigned.
+func RequestID(c *gin.Context) string { return c.GetString(CtxRequestID) }
 
 type errorBody struct {
 	Code    string            `json:"code"`
@@ -58,7 +64,7 @@ func Fail(c *gin.Context, err error) {
 	ae := apperr.As(err)
 	if ae.Kind == apperr.KindInternal {
 		slog.ErrorContext(c.Request.Context(), "internal error",
-			"request_id", RequestIDFrom(c), "route", c.FullPath(), "error", ae.Error())
+			"request_id", RequestID(c), "route", c.FullPath(), "error", ae.Error())
 	}
 	if ae.Kind == apperr.KindRateLimited && ae.RetryAfter > 0 {
 		c.Header("Retry-After", strconv.Itoa(int(math.Ceil(ae.RetryAfter.Seconds()))))

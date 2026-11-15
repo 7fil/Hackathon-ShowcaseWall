@@ -1,4 +1,6 @@
-package httpx
+// Package middleware holds the shared Gin middleware: request ID, logging, recovery,
+// CORS, origin check, body limit, rate limit, and bearer-token auth.
+package middleware
 
 import (
 	"context"
@@ -12,13 +14,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/apperr"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/response"
 )
 
 const (
-	ctxRequestID = "request_id"
-	ctxIdentity  = "identity"
+	ctxIdentity = "identity"
 )
 
 // TokenVerifier is implemented by the auth service.
@@ -31,15 +33,13 @@ type Limiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (allowed bool, retryAfter time.Duration, err error)
 }
 
-func RequestIDFrom(c *gin.Context) string { return c.GetString(ctxRequestID) }
-
 // RequestID assigns an ID to each request and echoes it in X-Request-ID.
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		b := make([]byte, 8)
 		_, _ = rand.Read(b)
 		id := hex.EncodeToString(b)
-		c.Set(ctxRequestID, id)
+		c.Set(response.CtxRequestID, id)
 		c.Header("X-Request-ID", id)
 		c.Next()
 	}
@@ -56,7 +56,7 @@ func AccessLog(log *slog.Logger) gin.HandlerFunc {
 			route = "unmatched"
 		}
 		attrs := []any{
-			"request_id", RequestIDFrom(c),
+			"request_id", response.RequestID(c),
 			"method", c.Request.Method,
 			"route", route,
 			"status", c.Writer.Status(),
@@ -75,8 +75,8 @@ func Recovery(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if r := recover(); r != nil {
-				log.Error("panic recovered", "request_id", RequestIDFrom(c), "route", c.FullPath())
-				Fail(c, apperr.Internal(errors.New("panic")))
+				log.Error("panic recovered", "request_id", response.RequestID(c), "route", c.FullPath())
+				response.Fail(c, apperr.Internal(errors.New("panic")))
 			}
 		}()
 		c.Next()
@@ -109,7 +109,7 @@ func CORS(origin string) gin.HandlerFunc {
 func RequireOrigin(origin string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if o := c.GetHeader("Origin"); o != "" && o != origin {
-			Fail(c, apperr.New(apperr.KindForbidden, "forbidden_origin", "Asal permintaan tidak diizinkan"))
+			response.Fail(c, apperr.New(apperr.KindForbidden, "forbidden_origin", "Asal permintaan tidak diizinkan"))
 			return
 		}
 		c.Next()
@@ -129,14 +129,14 @@ func RateLimitIP(l Limiter, log *slog.Logger, name string, limit int, window tim
 	return func(c *gin.Context) {
 		ok, retry, err := l.Allow(c.Request.Context(), "ip:"+name+":"+c.ClientIP(), limit, window)
 		if err != nil {
-			Fail(c, apperr.Internal(err))
+			response.Fail(c, apperr.Internal(err))
 			return
 		}
 		if !ok {
-			log.Warn("audit: rate limit hit", "request_id", RequestIDFrom(c), "scope", "ip:"+name, "ip", c.ClientIP())
+			log.Warn("audit: rate limit hit", "request_id", response.RequestID(c), "scope", "ip:"+name, "ip", c.ClientIP())
 			ae := apperr.New(apperr.KindRateLimited, "rate_limited", "Terlalu banyak permintaan, coba lagi nanti")
 			ae.RetryAfter = retry
-			Fail(c, ae)
+			response.Fail(c, ae)
 			return
 		}
 		c.Next()
@@ -149,16 +149,16 @@ func Auth(v TokenVerifier) gin.HandlerFunc {
 		h := c.GetHeader("Authorization")
 		scheme, token, found := strings.Cut(h, " ")
 		if !found || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
-			Fail(c, apperr.New(apperr.KindUnauthorized, "unauthorized", "Silakan masuk terlebih dahulu"))
+			response.Fail(c, apperr.New(apperr.KindUnauthorized, "unauthorized", "Silakan masuk terlebih dahulu"))
 			return
 		}
 		id, err := v.ParseAccessToken(strings.TrimSpace(token))
 		if err != nil {
 			if errors.Is(err, identity.ErrTokenExpired) {
-				Fail(c, apperr.New(apperr.KindUnauthorized, "token_expired", "Sesi kedaluwarsa"))
+				response.Fail(c, apperr.New(apperr.KindUnauthorized, "token_expired", "Sesi kedaluwarsa"))
 				return
 			}
-			Fail(c, apperr.New(apperr.KindUnauthorized, "unauthorized", "Token tidak valid"))
+			response.Fail(c, apperr.New(apperr.KindUnauthorized, "unauthorized", "Token tidak valid"))
 			return
 		}
 		c.Set(ctxIdentity, id)
@@ -171,7 +171,7 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, ok := IdentityFrom(c)
 		if !ok {
-			Fail(c, apperr.New(apperr.KindUnauthorized, "unauthorized", "Silakan masuk terlebih dahulu"))
+			response.Fail(c, apperr.New(apperr.KindUnauthorized, "unauthorized", "Silakan masuk terlebih dahulu"))
 			return
 		}
 		for _, r := range roles {
@@ -180,8 +180,8 @@ func RequireRole(roles ...string) gin.HandlerFunc {
 				return
 			}
 		}
-		slog.Warn("audit: permission denied", "request_id", RequestIDFrom(c), "user_id", id.UserID, "route", c.FullPath())
-		Fail(c, apperr.New(apperr.KindForbidden, "forbidden", "Anda tidak memiliki akses"))
+		slog.Warn("audit: permission denied", "request_id", response.RequestID(c), "user_id", id.UserID, "route", c.FullPath())
+		response.Fail(c, apperr.New(apperr.KindForbidden, "forbidden", "Anda tidak memiliki akses"))
 	}
 }
 

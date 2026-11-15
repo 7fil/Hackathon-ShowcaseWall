@@ -13,8 +13,8 @@ import (
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/security"
 	authsvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform/config"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform/database"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/config"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/database"
 )
 
 func main() {
