@@ -71,7 +71,7 @@ services:
           memory: 128M
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: showcase-minio
     restart: unless-stopped
     command: server /data
