@@ -21,8 +21,6 @@ func Open(ctx context.Context, url string, log *slog.Logger) (*gorm.DB, error) {
 	}
 	db, err := gorm.Open(postgres.Open(url), &gorm.Config{
 		TranslateError: true,
-		// Statements carry password hashes and token hashes. The logger drops the bound
-		// values (see slogGorm.ParamsFilter), so SQL is logged with "$1" placeholders.
 		Logger: gl,
 	})
 	if err != nil {
