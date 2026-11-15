@@ -73,3 +73,17 @@ Required GitHub Repository Secrets:
 - `VM_USER`: SSH username
 - `VM_SSH_KEY`: OpenSSH private key
 - `VM_PORT`: SSH port (e.g., `22` or `11114`)
+
+---
+
+## Admin and Media modules
+
+| Module | Path | Owns |
+| :--- | :--- | :--- |
+| `admin` | `internal/admin/{handler,service,repository}` | `GET /admin/works`, `GET /admin/summary`, `POST /admin/works/:id/publish`, `POST /admin/works/:id/unpublish`, `PATCH /admin/works/:id/feature` |
+| `media` | `internal/media/{handler,service,repository}` | `GET /media/works/:id/cover`, image checks (JPEG/PNG/WebP by content, 5 MB), random object keys, stable and signed URLs, MinIO / local-disk storage |
+
+- Modules talk only through service interfaces. `works` uses media through `works/service.MediaStore`, `admin` through `admin/service.CoverURLs`, and media asks `works` about a cover through `media/service.WorkLookup` (bound in `cmd/api/adapters.go`).
+- After a committed admin change the order is: commit, bump `works:version`, delete `work:{id}`, publish the event. Shared Redis keys live in `pkg/cache/keys.go`.
+- Status changes are conditional updates (`409` for the loser of a race). Featuring runs under a Postgres advisory lock and clears the previous mark in the same transaction.
+- Tests: `go test -race ./...` (admin and media service rules, local storage, `pkg/pgarray`).

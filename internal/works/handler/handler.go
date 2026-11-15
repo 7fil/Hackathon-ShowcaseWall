@@ -1,5 +1,6 @@
-// Package handler binds HTTP requests and maps results for the works, admin,
-// and media endpoints. It holds no business rules.
+// Package handler binds HTTP requests and maps results for the works endpoints
+// (gallery, detail, /me and create/edit/delete). Admin and media have their own
+// handlers. It holds no business rules.
 package handler
 
 import (
@@ -11,17 +12,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/middleware"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/response"
 )
 
-const (
-	maxMultipartBytes = 6 << 20
-	maxJSONBytes      = 16 << 10
-)
+const maxMultipartBytes = 6 << 20
 
 type Handler struct {
 	svc *service.Service
@@ -32,9 +29,7 @@ func New(svc *service.Service) *Handler {
 }
 
 func (h *Handler) Routes(v1 *gin.RouterGroup, requireAuth gin.HandlerFunc) {
-	requireAdmin := middleware.RequireRole(identity.RoleAdmin)
 	multipartLimit := middleware.BodyLimit(maxMultipartBytes)
-	jsonLimit := middleware.BodyLimit(maxJSONBytes)
 
 	w := v1.Group("/works")
 	w.GET("", h.listPublished)
@@ -47,19 +42,10 @@ func (h *Handler) Routes(v1 *gin.RouterGroup, requireAuth gin.HandlerFunc) {
 	w.PATCH("/:id", requireAuth, multipartLimit, h.updateWork)
 	w.DELETE("/:id", requireAuth, h.deleteWork)
 
-	v1.GET("/media/works/:id/cover", h.streamCover)
-
 	me := v1.Group("/me", requireAuth)
 	me.GET("/works", h.listMyWorks)
 	me.GET("/works/:id", h.getManagedDetail)
 	me.GET("/summary", h.getMySummary)
-
-	adm := v1.Group("/admin", requireAuth, requireAdmin)
-	adm.GET("/works", h.adminListWorks)
-	adm.GET("/summary", h.adminGetSummary)
-	adm.POST("/works/:id/publish", h.adminPublish)
-	adm.POST("/works/:id/unpublish", h.adminUnpublish)
-	adm.PATCH("/works/:id/feature", jsonLimit, h.adminSetFeatured)
 }
 
 func (h *Handler) listPublished(c *gin.Context) {
@@ -209,97 +195,6 @@ func (h *Handler) deleteWork(c *gin.Context) {
 		return
 	}
 	response.NoContent(c)
-}
-
-func (h *Handler) adminListWorks(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.Query("limit"))
-	page, err := h.svc.AdminListWorks(c.Request.Context(), service.ManagedListFilter{
-		Query:  c.Query("q"),
-		Status: c.Query("status"),
-		Cursor: c.Query("cursor"),
-		Limit:  limit,
-	})
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.OKWithMeta(c, http.StatusOK, page.Items, gin.H{"next_cursor": page.NextCursor})
-}
-
-func (h *Handler) adminGetSummary(c *gin.Context) {
-	sum, err := h.svc.AdminGetSummary(c.Request.Context())
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.OK(c, http.StatusOK, sum)
-}
-
-func (h *Handler) adminPublish(c *gin.Context) {
-	caller, _ := middleware.IdentityFrom(c)
-	w, err := h.svc.AdminPublish(c.Request.Context(), caller, c.Param("id"))
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.OK(c, http.StatusOK, w)
-}
-
-func (h *Handler) adminUnpublish(c *gin.Context) {
-	caller, _ := middleware.IdentityFrom(c)
-	w, err := h.svc.AdminUnpublish(c.Request.Context(), caller, c.Param("id"))
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.OK(c, http.StatusOK, w)
-}
-
-type featureRequest struct {
-	IsFeatured *bool `json:"is_featured"`
-}
-
-func (h *Handler) adminSetFeatured(c *gin.Context) {
-	caller, _ := middleware.IdentityFrom(c)
-	var req featureRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Fail(c, apperr.New(apperr.KindInvalid, "invalid_json", "Body permintaan tidak valid"))
-		return
-	}
-	if req.IsFeatured == nil {
-		response.Fail(c, apperr.Validation(map[string]string{"is_featured": "is_featured wajib diisi"}))
-		return
-	}
-	w, err := h.svc.AdminSetFeatured(c.Request.Context(), caller, c.Param("id"), *req.IsFeatured)
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	response.OK(c, http.StatusOK, w)
-}
-
-func (h *Handler) streamCover(c *gin.Context) {
-	stream, err := h.svc.StreamCover(c.Request.Context(), c.Param("id"), c.Query("exp"), c.Query("sig"))
-	if err != nil {
-		response.Fail(c, err)
-		return
-	}
-	defer stream.Body.Close()
-
-	c.Header("Cache-Control", "no-cache")
-	if stream.ETag != "" {
-		c.Header("ETag", stream.ETag)
-		if c.GetHeader("If-None-Match") == stream.ETag {
-			c.Status(http.StatusNotModified)
-			return
-		}
-	}
-	if stream.Size > 0 {
-		c.Header("Content-Length", strconv.FormatInt(stream.Size, 10))
-	}
-	c.Status(http.StatusOK)
-	c.Header("Content-Type", stream.ContentType)
-	_, _ = io.Copy(c.Writer, stream.Body)
 }
 
 type parsedWorkForm struct {

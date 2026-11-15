@@ -12,10 +12,19 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	adminhandler "github.com/7fil/Hackathon-ShowcaseWall.git/internal/admin/handler"
+	adminrepo "github.com/7fil/Hackathon-ShowcaseWall.git/internal/admin/repository"
+	adminsvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/admin/service"
 	authhandler "github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/handler"
 	authrepo "github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/repository"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/security"
 	authsvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/auth/service"
+	mediahandler "github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/handler"
+	mediarepo "github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/repository"
+	mediasvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/service"
+	workshandler "github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/handler"
+	worksrepo "github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/repository"
+	workssvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/middleware"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/cache"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/config"
@@ -108,39 +117,68 @@ func run() error {
 	}
 	r.Use(middleware.RequestID(), middleware.AccessLog(log), middleware.Recovery(log), middleware.CORS(cfg.FrontendOrigin))
 
-	var storage workssvc.ObjectStorage
+	// ---- media: object storage + image rules --------------------------------
+	var storage mediasvc.ObjectStorage
 	if cfg.MinioEndpoint != "" {
-		s3Store, err := worksrepo.NewS3Storage(ctx, cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey, cfg.MinioBucket, cfg.MinioUseSSL)
+		s3Store, err := mediarepo.NewS3Storage(ctx, cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey, cfg.MinioBucket, cfg.MinioUseSSL)
 		if err != nil {
 			return err
 		}
 		storage = s3Store
 	} else {
 		log.Warn("MINIO_ENDPOINT not set: using local disk storage for covers", "dir", cfg.MediaLocalDir)
-		localStore, err := worksrepo.NewLocalDiskStorage(cfg.MediaLocalDir)
+		localStore, err := mediarepo.NewLocalDiskStorage(cfg.MediaLocalDir)
 		if err != nil {
 			return err
 		}
 		storage = localStore
 	}
-
-	worksRedis := worksrepo.NewRedisCache(rdb)
-	worksService := workssvc.New(workssvc.Deps{
-		Works:      worksrepo.NewWorkRepo(db),
+	mediaService, err := mediasvc.New(mediasvc.Deps{
 		Storage:    storage,
-		Cache:      worksRedis,
-		Events:     worksRedis,
 		Logger:     log,
 		SignSecret: []byte(cfg.JWTSecret),
 	})
+	if err != nil {
+		return err
+	}
+
+	// ---- works ---------------------------------------------------------------
+	worksRedis := worksrepo.NewRedisCache(rdb)
+	worksService := workssvc.New(workssvc.Deps{
+		Works:  worksrepo.NewWorkRepo(db),
+		Media:  mediaService,
+		Cache:  worksRedis,
+		Events: worksRedis,
+		Logger: log,
+	})
 	defer worksService.Close()
+
+	// Media decides who may see a cover, but asks the works service about the work.
+	// It is bound here because works needs media and media needs works.
+	mediaService.SetWorkLookup(worksCoverLookup{works: worksService})
+
+	// ---- admin ---------------------------------------------------------------
+	adminRedis := adminrepo.NewRedisCache(rdb)
+	adminService, err := adminsvc.New(adminsvc.Deps{
+		Works:  adminrepo.NewWorkRepo(db),
+		Cache:  adminRedis,
+		Events: adminRedis,
+		Media:  mediaService,
+		Logger: log,
+	})
+	if err != nil {
+		return err
+	}
 
 	r.GET("/health", func(c *gin.Context) { response.OK(c, http.StatusOK, gin.H{"status": "ok"}) })
 
+	requireAuth := middleware.Auth(svc)
 	v1 := r.Group("/api/v1")
 	authhandler.New(svc, authhandler.CookieConfig{Secure: cfg.CookieSecure, SameSite: cfg.CookieSameSite}, cfg.FrontendOrigin).
-		Routes(v1, limiter, log, middleware.Auth(svc))
-		workshandler.New(worksService).Routes(v1, middleware.Auth(svc))
+		Routes(v1, limiter, log, requireAuth)
+	workshandler.New(worksService).Routes(v1, requireAuth)
+	adminhandler.New(adminService).Routes(v1, requireAuth)
+	mediahandler.New(mediaService).Routes(v1)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

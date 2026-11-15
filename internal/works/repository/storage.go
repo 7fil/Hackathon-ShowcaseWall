@@ -186,8 +186,7 @@ func (s *S3Storage) newSignedRequest(ctx context.Context, method, rawPath string
 		canonicalHeaders.WriteString(k)
 		canonicalHeaders.WriteByte(':')
 		canonicalHeaders.WriteString(strings.TrimSpace(headers[k]))
-		canonicalHeaders.WriteByte('
-')
+		canonicalHeaders.WriteByte('\n')
 	}
 	signedHeaders := strings.Join(keys, ";")
 
@@ -198,8 +197,7 @@ func (s *S3Storage) newSignedRequest(ctx context.Context, method, rawPath string
 		canonicalHeaders.String(),
 		signedHeaders,
 		payloadHash,
-	}, "
-")
+	}, "\n")
 
 	credentialScope := fmt.Sprintf("%s/%s/s3/aws4_request", dateStamp, s.region)
 	stringToSign := strings.Join([]string{
@@ -207,8 +205,7 @@ func (s *S3Storage) newSignedRequest(ctx context.Context, method, rawPath string
 		amzDate,
 		credentialScope,
 		sha256Hex([]byte(canonicalRequest)),
-	}, "
-")
+	}, "\n")
 
 	signingKey := deriveSigningKey(s.secretKey, dateStamp, s.region, "s3")
 	signature := hex.EncodeToString(hmacSHA256(signingKey, []byte(stringToSign)))
@@ -263,7 +260,7 @@ func NewLocalDiskStorage(baseDir string) (*LocalDiskStorage, error) {
 }
 
 func (l *LocalDiskStorage) resolve(key string) (string, error) {
-	clean := filepath.Clean(strings.TrimLeft(key, "/\"))
+	clean := filepath.Clean(strings.TrimLeft(key, "/"))
 	if strings.HasPrefix(clean, "..") {
 		return "", fmt.Errorf("invalid storage key")
 	}

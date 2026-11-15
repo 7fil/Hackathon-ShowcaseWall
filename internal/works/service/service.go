@@ -16,13 +16,12 @@ import (
 )
 
 type Deps struct {
-	Works      WorkRepository
-	Storage    ObjectStorage
-	Cache      WorkCache
-	Events     EventPublisher
-	Logger     *slog.Logger
-	SignSecret []byte
-	Now        func() time.Time
+	Works  WorkRepository
+	Media  MediaStore
+	Cache  WorkCache
+	Events EventPublisher
+	Logger *slog.Logger
+	Now    func() time.Time
 }
 
 type Service struct {
@@ -86,7 +85,7 @@ func (s *Service) ListPublished(ctx context.Context, f PublicListFilter) (*Publi
 
 	items := make([]PublicWork, 0, len(rows))
 	for _, w := range rows {
-		items = append(items, toPublicWork(w))
+		items = append(items, s.toPublicWork(w))
 	}
 	page := &PublicPage{Items: items, NextCursor: nextCursor}
 	_ = s.d.Cache.SetJSON(ctx, cacheKey, page, GalleryCacheTTL)
@@ -113,7 +112,7 @@ func (s *Service) GetFeatured(ctx context.Context) (*PublicWork, error) {
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	pw := toPublicWork(w)
+	pw := s.toPublicWork(w)
 	_ = s.d.Cache.SetJSON(ctx, cacheKey, featuredCache{Work: &pw}, GalleryCacheTTL)
 	return &pw, nil
 }
@@ -133,7 +132,7 @@ func (s *Service) ListExhibition(ctx context.Context) ([]PublicWork, error) {
 	}
 	items := make([]PublicWork, 0, len(rows))
 	for _, w := range rows {
-		items = append(items, toPublicWork(w))
+		items = append(items, s.toPublicWork(w))
 	}
 	_ = s.d.Cache.SetJSON(ctx, cacheKey, items, GalleryCacheTTL)
 	return items, nil
@@ -181,7 +180,7 @@ func (s *Service) GetPublishedDetail(ctx context.Context, id string) (*PublicWor
 		return nil, apperr.Internal(err)
 	}
 
-	detail := toPublicWorkDetail(w)
+	detail := s.toPublicWorkDetail(w)
 	_ = s.d.Cache.SetJSON(ctx, cacheKey, detail, DetailCacheTTL)
 	return &detail, nil
 }
@@ -218,8 +217,8 @@ func (s *Service) CreateWork(ctx context.Context, caller identity.Identity, in C
 	title, summary, desc, benefits, cat, tech, team, demo, repo, fields := validateWorkFields(
 		in.Title, in.Summary, in.Description, in.Benefits, in.Category, in.DemoURL, in.RepoURL, in.TechStack, in.TeamMembers,
 	)
-	contentType, ext, coverMsg, coverOK := sniffCover(in.Cover)
-	if !coverOK {
+	contentType, ext, coverMsg := s.checkCover(in.Cover)
+	if coverMsg != "" {
 		fields["cover"] = coverMsg
 	}
 	if len(fields) > 0 {
@@ -230,13 +229,8 @@ func (s *Service) CreateWork(ctx context.Context, caller identity.Identity, in C
 	if err != nil {
 		return nil, apperr.Internal(err)
 	}
-	fileUUID, err := NewUUID()
+	coverKey, err := s.d.Media.PutCover(ctx, workID, in.Cover.Data, contentType, ext)
 	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-	coverKey := fmt.Sprintf("works/%s/cover-%s%s", workID, fileUUID, ext)
-
-	if err := s.d.Storage.Put(ctx, coverKey, in.Cover.Data, contentType); err != nil {
 		return nil, apperr.Internal(err)
 	}
 
@@ -296,20 +290,17 @@ func (s *Service) UpdateWork(ctx context.Context, caller identity.Identity, id s
 	var (
 		newCoverKey   string
 		newCoverType  string
+		newCoverExt   string
 		newCoverBytes int64
 		oldCoverKey   string
 	)
 	if in.Cover != nil && len(in.Cover.Data) > 0 {
-		ct, ext, coverMsg, ok := sniffCover(in.Cover)
-		if !ok {
+		ct, ext, coverMsg := s.checkCover(in.Cover)
+		if coverMsg != "" {
 			fields["cover"] = coverMsg
 		} else {
-			fileUUID, err := NewUUID()
-			if err != nil {
-				return nil, apperr.Internal(err)
-			}
-			newCoverKey = fmt.Sprintf("works/%s/cover-%s%s", w.ID, fileUUID, ext)
 			newCoverType = ct
+			newCoverExt = ext
 			newCoverBytes = int64(len(in.Cover.Data))
 		}
 	}
@@ -317,10 +308,14 @@ func (s *Service) UpdateWork(ctx context.Context, caller identity.Identity, id s
 		return nil, apperr.Validation(fields)
 	}
 
-	if newCoverKey != "" {
-		if err := s.d.Storage.Put(ctx, newCoverKey, in.Cover.Data, newCoverType); err != nil {
+	// The new object is uploaded first; the old one is deleted only after the row
+	// update succeeds, and the new one is deleted if the update fails.
+	if newCoverType != "" {
+		key, err := s.d.Media.PutCover(ctx, w.ID, in.Cover.Data, newCoverType, newCoverExt)
+		if err != nil {
 			return nil, apperr.Internal(err)
 		}
+		newCoverKey = key
 		oldCoverKey = w.CoverKey
 		w.CoverKey = newCoverKey
 		w.CoverContentType = newCoverType
@@ -392,133 +387,6 @@ func (s *Service) DeleteWork(ctx context.Context, caller identity.Identity, id s
 	return nil
 }
 
-func (s *Service) AdminListWorks(ctx context.Context, f ManagedListFilter) (*ManagedPage, error) {
-	f.OwnerID = ""
-	return s.listManaged(ctx, f)
-}
-
-func (s *Service) AdminGetSummary(ctx context.Context) (*DashboardSummary, error) {
-	sum, err := s.d.Works.GetSummary(ctx, "")
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-	return &sum, nil
-}
-
-func (s *Service) AdminPublish(ctx context.Context, caller identity.Identity, id string) (*ManagedWork, error) {
-	w, err := s.d.Works.Publish(ctx, strings.TrimSpace(id), s.d.Now())
-	if errors.Is(err, ErrNotFound) {
-		return nil, errWorkNotFound
-	}
-	if errors.Is(err, ErrStatusConflict) {
-		return nil, apperr.New(apperr.KindConflict, "already_published", "Karya sudah berstatus Published")
-	}
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-
-	s.invalidateCache(ctx, w.ID)
-	if s.d.Events != nil && w.PublishedAt != nil {
-		payload := WsPublishedPayload{
-			ID:          w.ID,
-			Title:       w.Title,
-			Summary:     w.Summary,
-			Category:    w.Category,
-			TechStack:   nonNilSlice(w.TechStack),
-			TeamMembers: nonNilSlice(w.TeamMembers),
-			CoverURL:    stableCoverURL(w.ID),
-			PublishedAt: *w.PublishedAt,
-		}
-		if err := s.d.Events.PublishWorkEvent(ctx, EventWorkPublished, payload); err != nil {
-			s.d.Logger.Error("publish work.published event", "work_id", w.ID, "error", err.Error())
-		}
-	}
-	s.d.Logger.Info("audit: work published", "work_id", w.ID, "admin_id", caller.UserID)
-
-	mw := s.toManagedWork(w)
-	return &mw, nil
-}
-
-func (s *Service) AdminUnpublish(ctx context.Context, caller identity.Identity, id string) (*ManagedWork, error) {
-	w, err := s.d.Works.Unpublish(ctx, strings.TrimSpace(id), s.d.Now())
-	if errors.Is(err, ErrNotFound) {
-		return nil, errWorkNotFound
-	}
-	if errors.Is(err, ErrStatusConflict) {
-		return nil, apperr.New(apperr.KindConflict, "not_published", "Hanya karya berstatus Published yang dapat di-unpublish")
-	}
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-
-	s.invalidateCache(ctx, w.ID)
-	if s.d.Events != nil {
-		if err := s.d.Events.PublishWorkEvent(ctx, EventWorkUnpublished, WsIDPayload{ID: w.ID}); err != nil {
-			s.d.Logger.Error("publish work.unpublished event", "work_id", w.ID, "error", err.Error())
-		}
-	}
-	s.d.Logger.Info("audit: work unpublished", "work_id", w.ID, "admin_id", caller.UserID)
-
-	mw := s.toManagedWork(w)
-	return &mw, nil
-}
-
-func (s *Service) AdminSetFeatured(ctx context.Context, caller identity.Identity, id string, isFeatured bool) (*ManagedWork, error) {
-	w, err := s.d.Works.SetFeatured(ctx, strings.TrimSpace(id), isFeatured, s.d.Now())
-	if errors.Is(err, ErrNotFound) {
-		return nil, errWorkNotFound
-	}
-	if errors.Is(err, ErrStatusConflict) {
-		return nil, apperr.New(apperr.KindConflict, "feature_requires_published", "Hanya karya berstatus Published yang dapat dijadikan unggulan")
-	}
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-
-	s.invalidateCache(ctx, w.ID)
-	s.d.Logger.Info("audit: work featured changed", "work_id", w.ID, "is_featured", isFeatured, "admin_id", caller.UserID)
-
-	mw := s.toManagedWork(w)
-	return &mw, nil
-}
-
-func (s *Service) StreamCover(ctx context.Context, id, expStr, sigStr string) (*CoverStream, error) {
-	w, err := s.d.Works.FindByID(ctx, strings.TrimSpace(id))
-	if errors.Is(err, ErrNotFound) {
-		return nil, errWorkNotFound
-	}
-	if err != nil {
-		return nil, apperr.Internal(err)
-	}
-
-	if w.Status != StatusPublished {
-		if !verifyCoverSignature(s.d.SignSecret, w.ID, w.CoverKey, expStr, sigStr, s.d.Now()) {
-			return nil, errWorkNotFound
-		}
-	}
-
-	body, contentType, size, err := s.d.Storage.Get(ctx, w.CoverKey)
-	if err != nil {
-		s.d.Logger.Error("stream cover from storage", "work_id", w.ID, "key", w.CoverKey, "error", err.Error())
-		return nil, errWorkNotFound
-	}
-	if w.CoverContentType != "" {
-		contentType = w.CoverContentType
-	}
-	if size <= 0 {
-		size = w.CoverSizeBytes
-	}
-	etagSum := sha256.Sum256([]byte(w.CoverKey))
-	etag := `"` + hex.EncodeToString(etagSum[:8]) + `"`
-
-	return &CoverStream{
-		Body:        body,
-		ContentType: contentType,
-		Size:        size,
-		ETag:        etag,
-	}, nil
-}
-
 func (s *Service) listManaged(ctx context.Context, f ManagedListFilter) (*ManagedPage, error) {
 	if f.Limit <= 0 || f.Limit > MaxPageLimit {
 		f.Limit = DefaultPageLimit
@@ -566,7 +434,7 @@ func checkOwnerOrAdmin(caller identity.Identity, w *Work) error {
 	return errWorkNotFound
 }
 
-func toPublicWork(w *Work) PublicWork {
+func (s *Service) toPublicWork(w *Work) PublicWork {
 	var pubAt time.Time
 	if w.PublishedAt != nil {
 		pubAt = w.PublishedAt.UTC()
@@ -580,15 +448,15 @@ func toPublicWork(w *Work) PublicWork {
 		Category:    w.Category,
 		TechStack:   nonNilSlice(w.TechStack),
 		TeamMembers: nonNilSlice(w.TeamMembers),
-		CoverURL:    stableCoverURL(w.ID),
+		CoverURL:    s.d.Media.CoverURL(w.ID, w.CoverKey, true),
 		PublishedAt: pubAt,
 		IsFeatured:  w.IsFeatured,
 	}
 }
 
-func toPublicWorkDetail(w *Work) PublicWorkDetail {
+func (s *Service) toPublicWorkDetail(w *Work) PublicWorkDetail {
 	return PublicWorkDetail{
-		PublicWork:  toPublicWork(w),
+		PublicWork:  s.toPublicWork(w),
 		Description: w.Description,
 		Benefits:    w.Benefits,
 		DemoURL:     w.DemoURL,
@@ -597,10 +465,7 @@ func toPublicWorkDetail(w *Work) PublicWorkDetail {
 }
 
 func (s *Service) toManagedWork(w *Work) ManagedWork {
-	coverURL := stableCoverURL(w.ID)
-	if w.Status != StatusPublished {
-		coverURL = signCoverURL(s.d.SignSecret, w.ID, w.CoverKey, s.d.Now().Add(SignedCoverTTL))
-	}
+	coverURL := s.d.Media.CoverURL(w.ID, w.CoverKey, w.Status == StatusPublished)
 	var pubAt *time.Time
 	if w.PublishedAt != nil {
 		t := w.PublishedAt.UTC()
@@ -638,7 +503,7 @@ func (s *Service) invalidateCache(ctx context.Context, workID string) {
 }
 
 func (s *Service) deleteObjectAsync(key string) {
-	if s.d.Storage == nil || key == "" {
+	if s.d.Media == nil || key == "" {
 		return
 	}
 	s.wg.Add(1)
@@ -646,7 +511,7 @@ func (s *Service) deleteObjectAsync(key string) {
 		defer s.wg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		if err := s.d.Storage.Delete(ctx, key); err != nil {
+		if err := s.d.Media.DeleteObject(ctx, key); err != nil {
 			s.d.Logger.Warn("delete storage object failed", "key", key, "error", err.Error())
 		}
 	}()
@@ -669,4 +534,31 @@ func hashFilter(f PublicListFilter) string {
 	)
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:12])
+}
+
+// checkCover validates the upload through the media module. A nil or empty
+// upload is reported as a missing cover.
+func (s *Service) checkCover(c *CoverUpload) (contentType, ext, problem string) {
+	if c == nil {
+		return s.d.Media.CheckImage(nil)
+	}
+	return s.d.Media.CheckImage(c.Data)
+}
+
+// CoverInfo lets the media module decide who may see a cover without reading the
+// works table itself. A deleted or missing work is ErrNotFound.
+func (s *Service) CoverInfo(ctx context.Context, id string) (*CoverInfo, error) {
+	w, err := s.d.Works.FindByID(ctx, strings.TrimSpace(id))
+	if errors.Is(err, ErrNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &CoverInfo{
+		CoverKey:    w.CoverKey,
+		ContentType: w.CoverContentType,
+		SizeBytes:   w.CoverSizeBytes,
+		Published:   w.Status == StatusPublished,
+	}, nil
 }

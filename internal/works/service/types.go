@@ -1,11 +1,11 @@
 // Package service holds the business rules, RBAC checks, validation, caching,
-// and event fan-out for the works, admin moderation, and media modules.
+// and event fan-out for creating, editing, listing and reading works. Admin
+// moderation lives in internal/admin and images in internal/media.
 package service
 
 import (
 	"context"
 	"errors"
-	"io"
 	"time"
 )
 
@@ -34,11 +34,8 @@ const (
 
 	GalleryCacheTTL = 60 * time.Second
 	DetailCacheTTL  = 120 * time.Second
-	SignedCoverTTL  = 10 * time.Minute
 
-	EventWorkPublished   = "work.published"
-	EventWorkUnpublished = "work.unpublished"
-	EventWorkDeleted     = "work.deleted"
+	EventWorkDeleted = "work.deleted"
 )
 
 var (
@@ -178,28 +175,10 @@ type UpdateWorkInput struct {
 	Cover       *CoverUpload
 }
 
-type CoverStream struct {
-	Body        io.ReadCloser
-	ContentType string
-	Size        int64
-	ETag        string
-}
-
 type WsEvent struct {
 	Type    string `json:"type"`
 	Seq     int64  `json:"seq"`
 	Payload any    `json:"payload"`
-}
-
-type WsPublishedPayload struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	Summary     string    `json:"summary"`
-	Category    string    `json:"category"`
-	TechStack   []string  `json:"tech_stack"`
-	TeamMembers []string  `json:"team_members"`
-	CoverURL    string    `json:"cover_url"`
-	PublishedAt time.Time `json:"published_at"`
 }
 
 type WsIDPayload struct {
@@ -219,16 +198,27 @@ type WorkRepository interface {
 
 	ListManaged(ctx context.Context, f ManagedListFilter, cursorTime *time.Time, cursorID string) ([]*Work, error)
 	GetSummary(ctx context.Context, ownerID string) (DashboardSummary, error)
-
-	Publish(ctx context.Context, id string, now time.Time) (*Work, error)
-	Unpublish(ctx context.Context, id string, now time.Time) (*Work, error)
-	SetFeatured(ctx context.Context, id string, featured bool, now time.Time) (*Work, error)
 }
 
-type ObjectStorage interface {
-	Put(ctx context.Context, key string, data []byte, contentType string) error
-	Get(ctx context.Context, key string) (body io.ReadCloser, contentType string, size int64, err error)
-	Delete(ctx context.Context, key string) error
+// MediaStore is implemented by the media module's service. Works never talks to
+// the object store directly.
+type MediaStore interface {
+	// CheckImage inspects the bytes and returns the detected type and extension,
+	// or a problem message to show next to the cover field.
+	CheckImage(data []byte) (contentType, ext, problem string)
+	// PutCover stores the bytes and returns the random object key.
+	PutCover(ctx context.Context, workID string, data []byte, contentType, ext string) (key string, err error)
+	DeleteObject(ctx context.Context, key string) error
+	// CoverURL is the stable URL for a Published work and a signed one otherwise.
+	CoverURL(workID, coverKey string, published bool) string
+}
+
+// CoverInfo is what the media module needs to decide who may see a cover.
+type CoverInfo struct {
+	CoverKey    string
+	ContentType string
+	SizeBytes   int64
+	Published   bool
 }
 
 type WorkCache interface {

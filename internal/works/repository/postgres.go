@@ -1,114 +1,39 @@
-// Package repository implements PostgreSQL (Gorm), Redis caching & pub/sub,
-// and MinIO S3-compatible object storage for the works module.
 package repository
 
 import (
 	"context"
-	"database/sql/driver"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/service"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/pgarray"
 )
 
-type stringArray []string
-
-func (a stringArray) Value() (driver.Value, error) {
-	if len(a) == 0 {
-		return "{}", nil
-	}
-	elems := make([]string, len(a))
-	for i, s := range a {
-		escaped := strings.ReplaceAll(s, `\`, `\`)
-		escaped = strings.ReplaceAll(escaped, `"`, `"`)
-		elems[i] = `"` + escaped + `"`
-	}
-	return "{" + strings.Join(elems, ",") + "}", nil
-}
-
-func (a *stringArray) Scan(src any) error {
-	if src == nil {
-		*a = []string{}
-		return nil
-	}
-	var raw string
-	switch v := src.(type) {
-	case string:
-		raw = v
-	case []byte:
-		raw = string(v)
-	default:
-		return fmt.Errorf("unsupported TEXT[] scan type %T", src)
-	}
-	*a = parsePGArray(raw)
-	return nil
-}
-
-func parsePGArray(s string) []string {
-	s = strings.TrimSpace(s)
-	if len(s) < 2 || s[0] != '{' || s[len(s)-1] != '}' {
-		return []string{}
-	}
-	inner := s[1 : len(s)-1]
-	if inner == "" {
-		return []string{}
-	}
-	var out []string
-	var cur strings.Builder
-	inQuotes := false
-	escaped := false
-	for i := 0; i < len(inner); i++ {
-		ch := inner[i]
-		if escaped {
-			cur.WriteByte(ch)
-			escaped = false
-			continue
-		}
-		if ch == '\' {
-			escaped = true
-			continue
-		}
-		if ch == '"' {
-			inQuotes = !inQuotes
-			continue
-		}
-		if ch == ',' && !inQuotes {
-			out = append(out, cur.String())
-			cur.Reset()
-			continue
-		}
-		cur.WriteByte(ch)
-	}
-	out = append(out, cur.String())
-	return out
-}
-
 type workModel struct {
-	ID               string      `gorm:"column:id;type:uuid;primaryKey"`
-	OwnerID          string      `gorm:"column:owner_id;type:uuid"`
-	OwnerName        string      `gorm:"column:owner_name;->"`
-	Title            string      `gorm:"column:title"`
-	Summary          string      `gorm:"column:summary"`
-	Description      string      `gorm:"column:description"`
-	Benefits         string      `gorm:"column:benefits"`
-	Category         string      `gorm:"column:category"`
-	TechStack        stringArray `gorm:"column:tech_stack;type:text[]"`
-	TeamMembers      stringArray `gorm:"column:team_members;type:text[]"`
-	DemoURL          *string     `gorm:"column:demo_url"`
-	RepoURL          *string     `gorm:"column:repo_url"`
-	Status           string      `gorm:"column:status"`
-	IsFeatured       bool        `gorm:"column:is_featured"`
-	CoverKey         string      `gorm:"column:cover_key"`
-	CoverContentType string      `gorm:"column:cover_content_type"`
-	CoverSizeBytes   int64       `gorm:"column:cover_size_bytes"`
-	PublishedAt      *time.Time  `gorm:"column:published_at"`
-	CreatedAt        time.Time   `gorm:"column:created_at"`
-	UpdatedAt        time.Time   `gorm:"column:updated_at"`
-	DeletedAt        *time.Time  `gorm:"column:deleted_at"`
+	ID               string              `gorm:"column:id;type:uuid;primaryKey"`
+	OwnerID          string              `gorm:"column:owner_id;type:uuid"`
+	OwnerName        string              `gorm:"column:owner_name;->"`
+	Title            string              `gorm:"column:title"`
+	Summary          string              `gorm:"column:summary"`
+	Description      string              `gorm:"column:description"`
+	Benefits         string              `gorm:"column:benefits"`
+	Category         string              `gorm:"column:category"`
+	TechStack        pgarray.StringArray `gorm:"column:tech_stack;type:text[]"`
+	TeamMembers      pgarray.StringArray `gorm:"column:team_members;type:text[]"`
+	DemoURL          *string             `gorm:"column:demo_url"`
+	RepoURL          *string             `gorm:"column:repo_url"`
+	Status           string              `gorm:"column:status"`
+	IsFeatured       bool                `gorm:"column:is_featured"`
+	CoverKey         string              `gorm:"column:cover_key"`
+	CoverContentType string              `gorm:"column:cover_content_type"`
+	CoverSizeBytes   int64               `gorm:"column:cover_size_bytes"`
+	PublishedAt      *time.Time          `gorm:"column:published_at"`
+	CreatedAt        time.Time           `gorm:"column:created_at"`
+	UpdatedAt        time.Time           `gorm:"column:updated_at"`
+	DeletedAt        *time.Time          `gorm:"column:deleted_at"`
 }
 
 func (workModel) TableName() string { return "works" }
@@ -147,8 +72,8 @@ func newWorkModel(w *service.Work) workModel {
 		Description:      w.Description,
 		Benefits:         w.Benefits,
 		Category:         w.Category,
-		TechStack:        stringArray(w.TechStack),
-		TeamMembers:      stringArray(w.TeamMembers),
+		TechStack:        pgarray.StringArray(w.TechStack),
+		TeamMembers:      pgarray.StringArray(w.TeamMembers),
 		DemoURL:          w.DemoURL,
 		RepoURL:          w.RepoURL,
 		Status:           w.Status,
@@ -184,6 +109,9 @@ func (r *WorkRepo) Create(ctx context.Context, w *service.Work) error {
 }
 
 func (r *WorkRepo) FindByID(ctx context.Context, id string) (*service.Work, error) {
+	if !looksLikeUUID(id) {
+		return nil, service.ErrNotFound // avoids PostgreSQL's uuid cast error on a malformed id
+	}
 	var m workModel
 	err := r.baseQuery(ctx).Where("works.id = ?", id).First(&m).Error
 	if err != nil {
@@ -204,8 +132,8 @@ func (r *WorkRepo) Update(ctx context.Context, w *service.Work) error {
 			"description":        w.Description,
 			"benefits":           w.Benefits,
 			"category":           w.Category,
-			"tech_stack":         stringArray(w.TechStack),
-			"team_members":       stringArray(w.TeamMembers),
+			"tech_stack":         pgarray.StringArray(w.TechStack),
+			"team_members":       pgarray.StringArray(w.TeamMembers),
 			"demo_url":           w.DemoURL,
 			"repo_url":           w.RepoURL,
 			"cover_key":          w.CoverKey,
@@ -369,84 +297,6 @@ func (r *WorkRepo) GetSummary(ctx context.Context, ownerID string) (service.Dash
 	}, nil
 }
 
-func (r *WorkRepo) Publish(ctx context.Context, id string, now time.Time) (*service.Work, error) {
-	res := r.db.WithContext(ctx).Model(&workModel{}).
-		Where("id = ? AND deleted_at IS NULL AND status IN ?", id, []string{service.StatusDraft, service.StatusUnpublished}).
-		Updates(map[string]any{
-			"status":       service.StatusPublished,
-			"published_at": now,
-			"updated_at":   now,
-		})
-	if res.Error != nil {
-		return nil, res.Error
-	}
-	if res.RowsAffected == 0 {
-		if _, err := r.FindByID(ctx, id); err != nil {
-			return nil, err
-		}
-		return nil, service.ErrStatusConflict
-	}
-	return r.FindByID(ctx, id)
-}
-
-func (r *WorkRepo) Unpublish(ctx context.Context, id string, now time.Time) (*service.Work, error) {
-	res := r.db.WithContext(ctx).Model(&workModel{}).
-		Where("id = ? AND deleted_at IS NULL AND status = ?", id, service.StatusPublished).
-		Updates(map[string]any{
-			"status":      service.StatusUnpublished,
-			"is_featured": false,
-			"updated_at":  now,
-		})
-	if res.Error != nil {
-		return nil, res.Error
-	}
-	if res.RowsAffected == 0 {
-		if _, err := r.FindByID(ctx, id); err != nil {
-			return nil, err
-		}
-		return nil, service.ErrStatusConflict
-	}
-	return r.FindByID(ctx, id)
-}
-
-func (r *WorkRepo) SetFeatured(ctx context.Context, id string, featured bool, now time.Time) (*service.Work, error) {
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var m workModel
-		if err := tx.Where("id = ? AND deleted_at IS NULL", id).First(&m).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return service.ErrNotFound
-			}
-			return err
-		}
-		if m.Status != service.StatusPublished {
-			return service.ErrStatusConflict
-		}
-
-		if featured {
-			if err := tx.Model(&workModel{}).
-				Where("is_featured = TRUE AND id <> ? AND deleted_at IS NULL", id).
-				Updates(map[string]any{"is_featured": false, "updated_at": now}).Error; err != nil {
-				return err
-			}
-		}
-
-		res := tx.Model(&workModel{}).
-			Where("id = ? AND deleted_at IS NULL AND status = ?", id, service.StatusPublished).
-			Updates(map[string]any{"is_featured": featured, "updated_at": now})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected == 0 {
-			return service.ErrStatusConflict
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return r.FindByID(ctx, id)
-}
-
 func toDomainSlice(rows []workModel) []*service.Work {
 	out := make([]*service.Work, 0, len(rows))
 	for _, r := range rows {
@@ -456,8 +306,28 @@ func toDomainSlice(rows []workModel) []*service.Work {
 }
 
 func escapeILIKE(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\`)
+	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `%`, `\%`)
 	s = strings.ReplaceAll(s, `_`, `\_`)
 	return s
+}
+
+func looksLikeUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+				return false
+			}
+		}
+	}
+	return true
 }
