@@ -16,6 +16,7 @@ import (
 
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/metrics"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/response"
 )
 
@@ -45,8 +46,8 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
-// AccessLog writes one JSON line per request. It logs the route template, never
-// the query string, headers, cookies or bodies.
+// AccessLog writes one JSON line per request and records Prometheus HTTP metrics.
+// It logs the route template, never the query string, headers, cookies or bodies.
 func AccessLog(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -55,12 +56,17 @@ func AccessLog(log *slog.Logger) gin.HandlerFunc {
 		if route == "" {
 			route = "unmatched"
 		}
+		dur := time.Since(start)
+		status := c.Writer.Status()
+		metrics.IncHTTPRequest(c.Request.Method, route, status)
+		metrics.ObserveHTTPDuration(route, dur.Seconds())
+
 		attrs := []any{
 			"request_id", response.RequestID(c),
 			"method", c.Request.Method,
 			"route", route,
-			"status", c.Writer.Status(),
-			"latency_ms", time.Since(start).Milliseconds(),
+			"status", status,
+			"latency_ms", dur.Milliseconds(),
 			"ip", c.ClientIP(),
 		}
 		if id, ok := IdentityFrom(c); ok {

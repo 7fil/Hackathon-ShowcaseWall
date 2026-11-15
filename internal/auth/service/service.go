@@ -13,6 +13,7 @@ import (
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/logger"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/metrics"
 )
 
 type Deps struct {
@@ -167,6 +168,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput, ip string) error {
 		if _, _, err := s.d.Limiter.Allow(ctx, failKey, FailedLoginLimit, FailedLoginWindow); err != nil {
 			s.d.Logger.Error("count failed login", "error", err.Error())
 		}
+		metrics.IncLoginAttempt("failed")
 		s.d.Logger.Warn("audit: login failed", "step", "password", "email", logger.MaskEmail(email), "ip", ip)
 		return errInvalidCredentials
 	}
@@ -220,9 +222,11 @@ func (s *Service) VerifyOTP(ctx context.Context, in VerifyInput, ip string) (*Au
 	switch status {
 	case CodeOK:
 	case CodeExhausted:
+		metrics.IncOTPVerification("exhausted")
 		s.d.Logger.Warn("audit: code attempts exceeded", "purpose", in.Purpose, "email", logger.MaskEmail(email), "ip", ip)
 		return nil, codeAttemptsExceeded()
 	default:
+		metrics.IncOTPVerification("failed")
 		s.d.Logger.Warn("audit: login failed", "step", "code", "purpose", in.Purpose, "email", logger.MaskEmail(email), "ip", ip)
 		return nil, invalidCode()
 	}
@@ -262,6 +266,8 @@ func (s *Service) VerifyOTP(ctx context.Context, in VerifyInput, ip string) (*Au
 	if err != nil {
 		return nil, err
 	}
+	metrics.IncLoginAttempt("success")
+	metrics.IncOTPVerification("success")
 	s.d.Logger.Info("audit: login success", "purpose", in.Purpose, "user_id", user.ID, "ip", ip)
 	return res, nil
 }
@@ -478,6 +484,7 @@ func (s *Service) sendCode(ctx context.Context, purpose Purpose, email string) e
 	if err := s.d.Codes.SaveCode(ctx, purpose, email, hashCode(s.d.CodeSecret, purpose, email, code), OTPTTL); err != nil {
 		return apperr.Internal(err)
 	}
+	metrics.IncOTPRequest("sent")
 	msg := buildCodeEmail(email, code)
 	s.wg.Add(1)
 	go func() {

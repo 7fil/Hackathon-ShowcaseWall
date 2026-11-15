@@ -8,6 +8,7 @@ import (
 
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/admin/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/cache"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/metrics"
 )
 
 // RedisCache invalidates the public cache and publishes realtime events. The hub
@@ -47,5 +48,9 @@ func (c *RedisCache) PublishWorkEvent(ctx context.Context, eventType string, pay
 	if err != nil {
 		return err
 	}
-	return c.rdb.Publish(ctx, cache.WSChannel, string(b)).Err()
+	if err := c.rdb.Publish(ctx, cache.WSChannel, string(b)).Err(); err != nil {
+		return err
+	}
+	metrics.IncWSEventsPublished()
+	return nil
 }

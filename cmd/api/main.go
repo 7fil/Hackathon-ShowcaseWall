@@ -22,14 +22,14 @@ import (
 	mediahandler "github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/handler"
 	mediarepo "github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/repository"
 	mediasvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/media/service"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/platform"
+	rthandler "github.com/7fil/Hackathon-ShowcaseWall.git/internal/realtime/handler"
+	rtrepo "github.com/7fil/Hackathon-ShowcaseWall.git/internal/realtime/repository"
+	rtsvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/realtime/service"
 	workshandler "github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/handler"
 	worksrepo "github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/repository"
 	workssvc "github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/middleware"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/cache"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/config"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/database"
-	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/logger"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/response"
 )
 
@@ -41,31 +41,20 @@ func main() {
 }
 
 func run() error {
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	log := logger.New(cfg.Env)
-	slog.SetDefault(log)
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	db, err := database.Open(ctx, cfg.DatabaseURL)
+	plat, err := platform.Init(ctx)
 	if err != nil {
 		return err
 	}
-	// Pending migrations are applied before the API serves traffic.
-	if err := database.Migrate(ctx, db); err != nil {
-		return err
-	}
-	rdb, err := cache.NewRedis(ctx, cfg.RedisURL)
-	if err != nil {
-		return err
-	}
-	defer rdb.Close()
+	defer plat.Redis.Close()
 
-	limiter := cache.NewLimiter(rdb)
+	cfg := plat.Config
+	log := plat.Logger
+	db := plat.DB
+	rdb := plat.Redis
+	limiter := plat.Limiter
 
 	var mailer authsvc.Mailer
 	if cfg.DevPrintOTP {
@@ -154,7 +143,6 @@ func run() error {
 	defer worksService.Close()
 
 	// Media decides who may see a cover, but asks the works service about the work.
-	// It is bound here because works needs media and media needs works.
 	mediaService.SetWorkLookup(worksCoverLookup{works: worksService})
 
 	// ---- admin ---------------------------------------------------------------
@@ -170,6 +158,15 @@ func run() error {
 		return err
 	}
 
+	// ---- realtime ------------------------------------------------------------
+	wsHub := rtsvc.NewHub(rtsvc.Deps{
+		Subscriber:     rtrepo.NewRedisSubscriber(rdb),
+		Limiter:        limiter,
+		FrontendOrigin: cfg.FrontendOrigin,
+		Logger:         log,
+	})
+	go wsHub.Run(ctx)
+
 	r.GET("/health", func(c *gin.Context) { response.OK(c, http.StatusOK, gin.H{"status": "ok"}) })
 
 	requireAuth := middleware.Auth(svc)
@@ -179,6 +176,7 @@ func run() error {
 	workshandler.New(worksService).Routes(v1, requireAuth)
 	adminhandler.New(adminService).Routes(v1, requireAuth)
 	mediahandler.New(mediaService).Routes(v1)
+	rthandler.New(wsHub).Routes(r, v1)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,
@@ -188,10 +186,18 @@ func run() error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
-	errCh := make(chan error, 1)
+	metricsSrv := platform.NewMetricsServer(cfg.MetricsPort)
+
+	errCh := make(chan error, 2)
 	go func() {
 		log.Info("api listening", "addr", srv.Addr)
 		errCh <- srv.ListenAndServe()
+	}()
+	go func() {
+		log.Info("metrics listening", "addr", metricsSrv.Addr)
+		if err := metricsSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("metrics server error", "error", err.Error())
+		}
 	}()
 
 	select {
@@ -203,6 +209,7 @@ func run() error {
 		log.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		_ = metricsSrv.Shutdown(shutdownCtx)
 		return srv.Shutdown(shutdownCtx)
 	}
 	return nil

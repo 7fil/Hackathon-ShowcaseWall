@@ -10,6 +10,7 @@ import (
 
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/works/service"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/cache"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/metrics"
 )
 
 type RedisCache struct {
@@ -35,6 +36,7 @@ func (c *RedisCache) BumpVersion(ctx context.Context) error {
 func (c *RedisCache) GetJSON(ctx context.Context, key string, dest any) (bool, error) {
 	b, err := c.rdb.Get(ctx, key).Bytes()
 	if errors.Is(err, redis.Nil) {
+		metrics.IncCacheRequest("miss")
 		return false, nil
 	}
 	if err != nil {
@@ -43,6 +45,7 @@ func (c *RedisCache) GetJSON(ctx context.Context, key string, dest any) (bool, e
 	if err := json.Unmarshal(b, dest); err != nil {
 		return false, err
 	}
+	metrics.IncCacheRequest("hit")
 	return true, nil
 }
 
@@ -75,5 +78,9 @@ func (c *RedisCache) PublishWorkEvent(ctx context.Context, eventType string, pay
 	if err != nil {
 		return err
 	}
-	return c.rdb.Publish(ctx, cache.WSChannel, string(b)).Err()
+	if err := c.rdb.Publish(ctx, cache.WSChannel, string(b)).Err(); err != nil {
+		return err
+	}
+	metrics.IncWSEventsPublished()
+	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/metrics"
 )
 
 // Deps are the collaborators of the media service.
@@ -211,6 +212,7 @@ func (s *Service) StreamCover(ctx context.Context, workID, expStr, sigStr string
 	}
 
 	if !info.Published && !s.verify(workID, info.CoverKey, expStr, sigStr) {
+		metrics.IncMediaRequest("refused")
 		s.d.Logger.Warn("media refused", "work_id", workID, "reason", "bad_or_missing_signature")
 		return nil, errMediaNotFound
 	}
@@ -232,6 +234,7 @@ func (s *Service) StreamCover(ctx context.Context, workID, expStr, sigStr string
 		size = info.SizeBytes
 	}
 	sum := sha256.Sum256([]byte(info.CoverKey))
+	metrics.IncMediaRequest("served")
 	return &Stream{
 		Body:        body,
 		ContentType: contentType,

@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
+	"golang.org/x/sync/singleflight"
+
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/metrics"
 )
 
 type Deps struct {
@@ -27,6 +30,7 @@ type Deps struct {
 type Service struct {
 	d  Deps
 	wg sync.WaitGroup
+	sf singleflight.Group
 }
 
 func New(d Deps) *Service {
@@ -265,6 +269,7 @@ func (s *Service) CreateWork(ctx context.Context, caller identity.Identity, in C
 		w = loaded
 	}
 	s.invalidateCache(ctx, w.ID)
+	metrics.IncWorksAction("created")
 	s.d.Logger.Info("audit: work created", "work_id", w.ID, "user_id", caller.UserID)
 
 	mw := s.toManagedWork(w)
@@ -348,6 +353,7 @@ func (s *Service) UpdateWork(ctx context.Context, caller identity.Identity, id s
 	}
 
 	s.invalidateCache(ctx, w.ID)
+	metrics.IncWorksAction("edited")
 	s.d.Logger.Info("audit: work edited", "work_id", w.ID, "user_id", caller.UserID)
 
 	mw := s.toManagedWork(w)
@@ -383,6 +389,7 @@ func (s *Service) DeleteWork(ctx context.Context, caller identity.Identity, id s
 			s.d.Logger.Error("publish work.deleted event", "work_id", w.ID, "error", err.Error())
 		}
 	}
+	metrics.IncWorksAction("deleted")
 	s.d.Logger.Info("audit: work deleted", "work_id", w.ID, "user_id", caller.UserID, "was_published", wasPublished)
 	return nil
 }

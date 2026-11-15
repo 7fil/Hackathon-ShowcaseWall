@@ -13,6 +13,7 @@ import (
 	"github.com/7fil/Hackathon-ShowcaseWall.git/internal/identity"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/apperr"
 	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/cache"
+	"github.com/7fil/Hackathon-ShowcaseWall.git/pkg/metrics"
 )
 
 // Deps are the collaborators of the admin service.
@@ -135,6 +136,7 @@ func (s *Service) Publish(ctx context.Context, caller identity.Identity, id stri
 			PublishedAt: w.PublishedAt.UTC(),
 		}, w.ID)
 	}
+	metrics.IncWorksAction("published")
 	s.d.Logger.Info("audit: work published", "work_id", w.ID, "admin_id", caller.UserID)
 
 	mw := s.toManaged(w)
@@ -158,6 +160,7 @@ func (s *Service) Unpublish(ctx context.Context, caller identity.Identity, id st
 
 	s.afterCommit(ctx, w.ID)
 	s.publishEvent(ctx, EventWorkUnpublished, WsIDPayload{ID: w.ID}, w.ID)
+	metrics.IncWorksAction("unpublished")
 	s.d.Logger.Info("audit: work unpublished", "work_id", w.ID, "admin_id", caller.UserID)
 
 	mw := s.toManaged(w)
@@ -181,6 +184,7 @@ func (s *Service) SetFeatured(ctx context.Context, caller identity.Identity, id 
 	}
 
 	s.afterCommit(ctx, w.ID)
+	metrics.IncWorksAction("featured")
 	s.d.Logger.Info("audit: work featured changed", "work_id", w.ID, "is_featured", featured, "admin_id", caller.UserID)
 
 	mw := s.toManaged(w)
