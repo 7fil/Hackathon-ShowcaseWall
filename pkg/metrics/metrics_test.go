@@ -33,3 +33,31 @@ func TestExpositionHasTypesAndRuntime(t *testing.T) {
 		t.Errorf("TYPE line for a family must appear once, got %d", n)
 	}
 }
+
+func TestPreregisterExposesZeroSeriesBeforeAnyEvent(t *testing.T) {
+	r := NewRegistry()
+	Default = r
+	r.Preregister()
+
+	var b strings.Builder
+	r.WritePrometheus(&b)
+	out := b.String()
+	for _, want := range []string{
+		`works_total{action="published"} 0`,
+		`login_attempts_total{result="failed"} 0`,
+		`cache_requests_total{result="hit"} 0`,
+		`media_requests_total{result="refused"} 0`,
+		`ws_handshakes_rejected_total{reason="bad_origin"} 0`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing zero series %q", want)
+		}
+	}
+	// The first real event must continue from the zero series, not start a new one.
+	IncWorksAction("published")
+	b.Reset()
+	r.WritePrometheus(&b)
+	if !strings.Contains(b.String(), `works_total{action="published"} 1`) {
+		t.Error("counter did not increment from the preregistered series")
+	}
+}

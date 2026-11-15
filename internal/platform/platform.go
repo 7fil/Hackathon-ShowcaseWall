@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -32,10 +33,15 @@ func Init(ctx context.Context) (*Platform, error) {
 	if err != nil {
 		return nil, err
 	}
-	log := logger.New(cfg.Env)
+	log := logger.New(logger.Options{
+		Env: cfg.Env, Version: cfg.Version, Level: cfg.LogLevel, Format: cfg.LogFormat,
+	})
 	slog.SetDefault(log)
+	log.Info("starting",
+		"go_version", runtime.Version(), "port", cfg.Port,
+		"log_level", logger.ParseLevel(cfg.LogLevel, logger.DefaultLevel(cfg.Env)).String())
 
-	db, err := database.Open(ctx, cfg.DatabaseURL)
+	db, err := database.Open(ctx, cfg.DatabaseURL, log)
 	if err != nil {
 		return nil, err
 	}
@@ -57,6 +63,7 @@ func Init(ctx context.Context) (*Platform, error) {
 
 // NewMetricsServer builds the internal-only Prometheus scrape server (e.g. :9100).
 func NewMetricsServer(port string) *http.Server {
+	metrics.Preregister()
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", metrics.Handler())
 	return &http.Server{

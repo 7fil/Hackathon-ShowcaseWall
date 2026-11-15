@@ -987,7 +987,7 @@
           "Auth"
         ],
         "summary": "Sign In / Sign Up with Firebase OAuth (Google)",
-        "description": "Exchanges a Firebase ID Token (`id_token`) obtained on the frontend for a backend session (`access_token` + `HttpOnly` `refresh_token` cookie) without requiring an email OTP code.\n\n**Account Resolution Rules:**\n- **Returning OAuth User**: Matched by `firebase_uid`.\n- **Existing Local User (Unlinked)**: Automatically links `firebase_uid` to the existing account and sets `auth_provider = \"both\"`.\n- **New Email**: Creates user with `password_hash = NULL`, `auth_provider = \"google\"`, and role `Admin` if email is in `ADMIN_EMAILS`/`ADMIN_EMAIL`, else `Contributor`.\n- **Conflict**: If the email is already linked to a different `firebase_uid`, returns `409 oauth_account_conflict`.",
+        "description": "Exchanges a Firebase ID Token (`id_token`) obtained on the frontend for a backend session (`access_token` + `HttpOnly` `refresh_token` cookie) without requiring an email OTP code.\n\n**Account Resolution Rules:**\n- **Returning OAuth User**: Matched by `firebase_uid`.\n- **Existing Local User (Unlinked)**: Automatically links `firebase_uid` to the existing account and sets `auth_provider = \"both\"`.\n- **New Email**: Creates user with `password_hash = NULL`, `auth_provider = \"google\"`, and role `Contributor`. Admins are created only on the server with the `/app/seed` command.\n- **Conflict**: If the email is already linked to a different `firebase_uid`, returns `409 oauth_account_conflict`.",
         "operationId": "oauthFirebase",
         "requestBody": {
           "required": true,

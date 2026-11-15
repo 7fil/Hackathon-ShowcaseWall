@@ -97,6 +97,37 @@ func (r *Registry) histPtr(key string) *histogram {
 	return h
 }
 
+// knownSeries are the label values the code uses, so every series can exist at zero from
+// startup. A Prometheus series that only appears on its first event shows "No data" in
+// Grafana, and rate()/increase() ignore that first event because there is no earlier
+// sample to compare with.
+var knownSeries = map[string][]string{
+	"works_total":                  {"created", "edited", "deleted", "published", "unpublished", "featured"},
+	"login_attempts_total":         {"success", "failed"},
+	"otp_requests_total":           {"sent"},
+	"otp_verifications_total":      {"success", "failed", "exhausted"},
+	"cache_requests_total":         {"hit", "miss"},
+	"media_requests_total":         {"served", "refused"},
+	"ws_handshakes_rejected_total": {"bad_origin", "rate_limited", "ip_limit", "total_limit"},
+}
+
+// Preregister creates every known labelled counter with value 0. Call it once at startup.
+func Preregister() { Default.Preregister() }
+
+// Preregister creates every known labelled counter with value 0 in this registry.
+func (r *Registry) Preregister() {
+	label := map[string]string{"works_total": "action", "ws_handshakes_rejected_total": "reason"}
+	for family, values := range knownSeries {
+		name := label[family]
+		if name == "" {
+			name = "result"
+		}
+		for _, v := range values {
+			r.counterPtr(fmt.Sprintf(`%s{%s=%q}`, family, name, v))
+		}
+	}
+}
+
 // ---- Spec Metrics Helpers ----
 
 func IncHTTPRequest(method, route string, status int) {

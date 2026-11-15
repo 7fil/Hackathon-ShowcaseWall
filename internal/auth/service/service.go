@@ -17,18 +17,17 @@ import (
 )
 
 type Deps struct {
-	Users       UserRepository
-	Sessions    SessionRepository
-	Codes       CodeStore
-	Limiter     RateLimiter
-	Mailer      Mailer
-	Hasher      PasswordHasher
-	Tokens      TokenIssuer
-	Logger      *slog.Logger
-	IDTokens    IDTokenVerifier  // nil when Firebase is not configured
-	AdminEmails []string         // emails that become Admin on first OAuth sign-in
-	CodeSecret  []byte           // keys the code hash
-	Now         func() time.Time // optional, for tests
+	Users      UserRepository
+	Sessions   SessionRepository
+	Codes      CodeStore
+	Limiter    RateLimiter
+	Mailer     Mailer
+	Hasher     PasswordHasher
+	Tokens     TokenIssuer
+	Logger     *slog.Logger
+	IDTokens   IDTokenVerifier  // nil when Firebase is not configured
+	CodeSecret []byte           // keys the code hash
+	Now        func() time.Time // optional, for tests
 }
 
 type Service struct {
@@ -184,6 +183,7 @@ func (s *Service) Login(ctx context.Context, in LoginInput, ip string) (*AuthRes
 	s.d.Logger.Info("audit: login success", "purpose", "login", "user_id", user.ID, "ip", ip)
 	return res, nil
 }
+
 // ------------------------------------------------------------------ OTP verify
 
 // VerifyOTP confirms a code. For register it creates the Contributor account; for

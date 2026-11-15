@@ -4,6 +4,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"gorm.io/driver/postgres"
@@ -11,11 +12,18 @@ import (
 	gormlogger "gorm.io/gorm/logger"
 )
 
-func Open(ctx context.Context, url string) (*gorm.DB, error) {
+// Open connects to PostgreSQL. Failed and slow queries are logged to log (nil keeps
+// Gorm silent). Queries are logged with placeholders only, never with their values.
+func Open(ctx context.Context, url string, log *slog.Logger) (*gorm.DB, error) {
+	var gl gormlogger.Interface = gormlogger.Discard
+	if log != nil {
+		gl = newSlogGorm(log)
+	}
 	db, err := gorm.Open(postgres.Open(url), &gorm.Config{
 		TranslateError: true,
-		// SQL logging is off: statements carry password hashes and token hashes.
-		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
+		// Statements carry password hashes and token hashes. The logger drops the bound
+		// values (see slogGorm.ParamsFilter), so SQL is logged with "$1" placeholders.
+		Logger: gl,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open postgres: %w", err)

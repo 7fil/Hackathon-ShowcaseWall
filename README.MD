@@ -5,7 +5,7 @@ Backend service for **BCC Showcase Wall**, currently implementing the complete A
 - **Firebase OAuth (Google Sign-In / Sign-Up)** with automatic account linking (`POST /api/v1/auth/oauth/firebase`)
 - **Session Management** (`JWT` 15-minute access token + 1-day `HttpOnly` rotating refresh token cookie with reuse detection)
 - **Embedded SQL Migrations** (`0001_create_users.sql`, `0002_create_sessions.sql`, `0003_oauth_users.sql`)
-- **Admin Seed CLI** (`cmd/seed`)
+- **Admin Seed CLI** (`cmd/seed`): the only way to create an Admin, run with `docker exec` on the server
 
 ---
 
@@ -32,7 +32,7 @@ All API endpoints are prefixed with `/api/v1` (except `GET /health`).
    - **Returning OAuth User:** Matches `firebase_uid` first.
    - **Existing Email+Password User:** If the email already exists in `users` without a `firebase_uid`, links the `firebase_uid` to the existing account and sets `auth_provider = "both"`.
    - **Conflict Protection:** If the email is already linked to a *different* `firebase_uid`, returns `409 Conflict` (`oauth_account_conflict`).
-   - **New User:** Creates a new user (`password_hash = NULL`, `auth_provider = "google"`). Assigns role `Admin` if the email is listed in `ADMIN_EMAIL` or `ADMIN_EMAILS`, otherwise `Contributor`.
+   - **New User:** Creates a new user (`password_hash = NULL`, `auth_provider = "google"`). Always creates a `Contributor`; nobody becomes Admin by signing up (see section 4).
 4. **Immediate Session:** Skips email OTP and directly issues the 15-minute `access_token` and 1-day `HttpOnly` `refresh_token` cookie.
 
 ---
@@ -43,7 +43,8 @@ Copy `.env.example` to `.env` and configure:
 
 - `FIREBASE_PROJECT_ID`: Your Firebase project ID.
 - `FIREBASE_CREDENTIALS_JSON`: Inline JSON string of your Firebase Service Account key (or set `FIREBASE_CREDENTIALS_FILE=/app/secrets/firebase.json`).
-- `ADMIN_EMAILS`: Comma-separated list of emails that automatically receive the `Admin` role when signing up via Firebase OAuth.
+- `APP_ENV`: `development`, `staging` or `production`. Anything else stops the app at startup.
+- `LOG_LEVEL` / `LOG_FORMAT`: optional overrides, see section 5.
 
 ---
 
@@ -56,17 +57,59 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Seed the initial Admin account (uses `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` from `.env`):
-
-```bash
-docker compose exec api /app/seed
-```
+See section 4 for making Admins.
 
 ---
 
-## 4. CI/CD Deployment (`.github/workflows/deploy-staging.yml`)
+## 4. Making Admins (server only)
+
+There is no Admin endpoint and no `ADMIN_*` environment variable, so no request from outside can create an Admin. Admins are made by running the `seed` command **inside the API container**, which needs shell access to the Docker host:
+
+```bash
+# one or several people; separate with spaces or commas
+docker exec -it showcase-api /app/seed alice@example.com bob@example.com
+```
+
+(Production: the container is `showcase-prod-api`.)
+
+- The person must **already have an account** (registered, or signed in with Google once). Unknown emails are reported and skipped; the command never creates accounts.
+- Result per email: `is now Admin`, `was already Admin`, or `no account with this email`. The exit code is non-zero if any email failed.
+- The new role takes effect at the person's next sign-in or token refresh (access tokens last 15 minutes).
+- Every grant writes an `audit: admin role granted` line to the container log (`docker logs showcase-api`), with the email masked.
+
+---
+
+## 5. Logging
+
+Logs go to stdout only; Docker keeps them (rotated: 5 files of 10 MB per container) and `docker logs -f showcase-api` reads them.
+
+| | development | staging | production |
+| :--- | :--- | :--- | :--- |
+| Format | readable text | JSON, one object per line | JSON, one object per line |
+| Default level | `debug` | `info` | `info` |
+| `DEV_PRINT_OTP` | allowed | refused | refused |
+| `COOKIE_SECURE=false` | allowed | allowed | refused |
+
+Every line has `time` (UTC), `level`, `msg`, `service`, `env` and `version` (the git SHA of the image). Requests add `request_id`, `method`, `route`, `status`, `latency_ms`, `bytes`, `ip`, `user_agent` and `user_id` when known. The level follows the result: 5xx `ERROR`, 4xx and requests over 2 s `WARN`, the rest `INFO`; `/health` is `DEBUG`. A request ID sent by the reverse proxy in `X-Request-ID` is kept, otherwise one is generated and returned in the response header. Panics are logged with the value and stack trace; failed and slow (>300 ms) database queries are logged with placeholders only.
+
+Secrets cannot leak by accident: attributes named like `password`, `token`, `authorization`, `cookie`, `code`, `secret` are replaced by `[REDACTED]`, and `email` is masked (`a***@example.com`). Audit events use the `audit:` message prefix, so `docker logs showcase-api | grep '"audit:'` lists them.
+
+---
+
+## 6. CI/CD Deployment
+
+### Staging (`.github/workflows/deploy-staging.yml`)
 
 Pushing to the `staging` branch builds `bcc-showcase-app:staging` on GitHub Actions, transfers the image archive to the VM over SCP, loads it into Docker, and runs `docker compose up -d --no-build` in `/opt/bcc-showcase`.
+
+### Production (`.github/workflows/deploy-production.yml`)
+
+Pushing to the `production` branch (or running the workflow by hand) deploys to `/opt/bcc-showcase-prod` as its own compose project (`bcc-showcase-prod`), so production never shares a database, Redis or cover storage with staging.
+
+- **Fresh start:** the first production deploy has no `.fresh-db-initialized` marker on the VM, so it runs `docker compose down -v` and starts with an empty database; the app then applies all migrations itself. Later deploys keep the data. To wipe production again, run the workflow manually with **wipe_data** ticked, or run `./scripts/reset-data.sh` in the stack's directory (it asks you to type the environment name).
+- **Config check:** the deploy fails before touching anything if `/opt/bcc-showcase-prod/.env` lacks `JWT_SECRET` (32+ chars), `RESEND_API_KEY`, `RESEND_FROM`, `FRONTEND_ORIGIN` or a non-default `POSTGRES_PASSWORD`, or has `DEV_PRINT_OTP=true` / `COOKIE_SECURE=false`.
+- Put the production secrets in a GitHub Environment named `production` (same secret names as below), and use another VM or set `API_PORT`, `GRAFANA_PORT`, `PROMETHEUS_PORT` in the production `.env` if it shares a VM with staging.
+- After the first deploy, create the admins with `docker exec -it showcase-prod-api /app/seed <emails>`.
 
 Required GitHub Repository Secrets:
 - `VM_HOST`: VM IP address or hostname
@@ -89,7 +132,7 @@ Required GitHub Repository Secrets:
 - Tests: `go test -race ./...` (admin and media service rules, local storage, `pkg/pgarray`).
 
 1
-## Monitoring (Prometheus + Grafana)
+## Monitoring (Prometheus + Grafana + Loki)
 
 `docker compose up -d` starts Prometheus (7 days of data, 512 MB) and Grafana (256 MB) next to the API.
 Prometheus scrapes the API's internal metrics port `api:9100` over the Docker network; that port is never published.
@@ -105,3 +148,18 @@ ssh -N -L 3000:127.0.0.1:3000 -L 9090:127.0.0.1:9090 -p <VM_PORT> <VM_USER>@<VM_
 The datasource and the **Showcase Wall — API** dashboard (traffic, errors, latency by route, WebSocket, logins/OTP, works actions, media, cache, runtime) are provisioned from `monitoring/` and read-only in the UI; edit the JSON and redeploy.
 
 Staging deploy (`.github/workflows/deploy-staging.yml`) copies `monitoring/`, writes `GRAFANA_ADMIN_PASSWORD` from the GitHub secret of the same name into `/opt/bcc-showcase/.env`, and fails the deploy if Prometheus cannot scrape the API or Grafana cannot load the dashboard and datasource.
+
+### Logs in Grafana
+
+Alloy reads every container's stdout through the Docker API (the socket is mounted read-only into the `alloy` container only) and ships it to Loki, which keeps 7 days (256 MB + 128 MB memory limits). In Grafana:
+
+- The dashboard has a **Logs** row: warnings and errors, audit events, and all containers.
+- **Explore** (compass icon) with the Loki datasource gives live tail. Examples:
+  - `{service="api"} | json | status >= 500`
+  - `{service="api"} | json | request_id="<id>"` (follow one request)
+  - `{service="api"} |= "audit:"`
+  - `{service="api", level="ERROR"}`
+- Labels are only `service`, `container` and `level`; everything else (request_id, user_id, route) is read from the JSON line with `| json`.
+- `docker logs` keeps working as before.
+
+Counters with labels (works, logins, cache, media, WebSocket rejections) are created at 0 on startup, so panels show 0 instead of "No data" before the first event. Rate panels use a 1-minute window so changes show within about 15-30 seconds.

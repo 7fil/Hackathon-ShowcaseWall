@@ -81,7 +81,7 @@ func (s *Service) resolveOAuthUser(ctx context.Context, c *IDTokenClaims, email 
 		uid := c.UID
 		nu := &User{
 			ID: id, Email: email, DisplayName: oauthDisplayName(c.Name, email),
-			Role: s.roleFor(email), FirebaseUID: &uid,
+			Role: identity.RoleContributor, FirebaseUID: &uid,
 			AuthProvider: ProviderGoogle, EmailVerifiedAt: &now,
 		}
 		err = s.d.Users.Create(ctx, nu)
@@ -121,16 +121,6 @@ func (s *Service) linkOAuthUser(ctx context.Context, u *User, uid string) (*User
 	}
 	s.d.Logger.Info("audit: oauth account linked", "user_id", u.ID, "provider", provider)
 	return u, nil
-}
-
-// roleFor gives Admin only to emails in the server's Admin list; everyone else is a Contributor.
-func (s *Service) roleFor(email string) string {
-	for _, a := range s.d.AdminEmails {
-		if normalizeEmail(a) == email {
-			return identity.RoleAdmin
-		}
-	}
-	return identity.RoleContributor
 }
 
 // oauthDisplayName uses the Google name, falling back to the email prefix, within the name limits.
