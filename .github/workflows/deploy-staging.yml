@@ -94,6 +94,10 @@ jobs:
             docker compose up -d --no-build --remove-orphans
             # Config files are bind-mounted, so reload Prometheus in case only they changed.
             docker compose exec -T prometheus wget -qO- --post-data= http://localhost:9090/-/reload >/dev/null || true
+            # Grafana reads provisioning (datasources/dashboards) and Loki/Alloy read their config only at
+            # startup. `up -d` does not recreate a container when just a bind-mounted file changed, which
+            # leaves Grafana with "Datasource loki was not found". Restart them so they pick up the files.
+            docker compose restart loki alloy grafana
             docker image prune -f
 
             echo "Waiting for Prometheus to scrape the API..."
@@ -117,17 +121,18 @@ jobs:
             ok=""
             for i in $(seq 1 20); do
               if gget /api/dashboards/uid/showcase-wall 2>/dev/null | grep -q '"uid":"showcase-wall"' \
-                 && gget /api/datasources/uid/prometheus/health 2>/dev/null | grep -q '"OK"'; then ok=1; break; fi
+                 && gget /api/datasources/uid/prometheus/health 2>/dev/null | grep -q '"OK"' \
+                 && gget /api/datasources/uid/loki/health 2>/dev/null | grep -q '"OK"'; then ok=1; break; fi
               sleep 3
             done
             if [ -z "$ok" ]; then
-              echo "::error::Grafana dashboard or Prometheus datasource is not healthy"
+              echo "::error::Grafana dashboard, Prometheus or Loki datasource is not healthy"
               echo "--- grafana server env"; docker compose exec -T grafana env | grep -E '^GF_(SERVER|PATHS)' || true
               echo "--- compose files on the VM"; ls -la /opt/bcc-showcase | grep -i -E 'compose|\.env' || true
               echo "--- provisioned dashboard files"; docker compose exec -T grafana ls -la /var/lib/grafana/dashboards || true
               echo "--- grafana health"; gget /api/health || true
               echo "--- dashboard request"; docker compose exec -T grafana wget -S -O- --header "Authorization: Basic $B64" http://localhost:3000/api/dashboards/uid/showcase-wall 2>&1 | head -20 || true
-              echo "--- datasource health"; gget /api/datasources/uid/prometheus/health || true
+              echo "--- datasource health"; gget /api/datasources/uid/prometheus/health || true; gget /api/datasources/uid/loki/health || true
               docker compose logs --tail=40 grafana
               exit 1
             fi
